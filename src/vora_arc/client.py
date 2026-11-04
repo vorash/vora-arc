@@ -190,10 +190,12 @@ def _run_status(output: _Exec, stats: Stats) -> RunStatus:
     elif output.exited:
         reason = output.exit_reason
     else:
-        raise SandboxInfrastructureError("exec stream ended without an exit record and no resource kill")
+        raise SandboxInfrastructureError(
+            f"exec stream ended without an exit record and no resource kill; stderr: {_stderr(output)}"
+        )
     status = _RUN_STATUS_BY_EXIT_REASON.get(reason or "")
     if status is None:
-        raise SandboxInfrastructureError(f"unexpected exit reason {reason!r}")
+        raise SandboxInfrastructureError(f"unexpected exit reason {reason!r}; stderr: {_stderr(output)}")
     return status
 
 
@@ -267,6 +269,10 @@ async def _destroy(sandbox: Sandbox, profile: Profile) -> None:
         await sandbox.destroy()
     except (VoraError, httpx.HTTPError):
         log.warning("destroy %s failed; its %ss TTL removes it", sandbox.id, profile.ttl_seconds, exc_info=True)
+
+
+def _stderr(output: _Exec) -> str:
+    return output.stderr.decode("utf-8", "replace")[-500:]
 
 
 def _tail(text: str, limit: int) -> str:

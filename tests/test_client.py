@@ -135,6 +135,8 @@ async def test_sandbox_is_created_with_the_profile_limits_and_fed_the_protocol_o
     assert create["backend"] == "gvisor"
     assert create["network"] == {"mode": "NETWORK_NONE"}
     assert create["resources"] == {"cpuMillis": "1000", "memoryBytes": str(256 * 1024 * 1024), "pids": "16"}
+    # The TTL removes a sandbox whose destroy call failed.
+    assert create["ttlSeconds"] == str(PROFILE.ttl_seconds)
 
     exec_ = fake.bodies["exec"]
     assert [exec_["command"], *exec_["args"]] == list(PROFILE.runner_command)
@@ -231,9 +233,11 @@ async def test_exit_reason_maps_to_run_status(reason: str, stats: dict[str, str]
 
 @pytest.mark.parametrize("reason", ["RUNTIME_FAILURE", "DISK_QUOTA_EXCEEDED", "POLICY_VIOLATION", "SOMETHING_NEW", None])
 async def test_unknown_exit_reason_is_an_infrastructure_error_not_a_program_verdict(reason: str | None) -> None:
-    fake = FakeVora(exec_chunks=[*ALL_OK[:-1], exit_(reason)])
+    # A wrong runner path shows up as RUNTIME_FAILURE; the error must carry Vora's stderr to say so.
+    message = base64.b64encode(b"vora-init: exec: no such file or directory\n").decode()
+    fake = FakeVora(exec_chunks=[*ALL_OK[:-1], {"stderr": message}, exit_(reason)])
 
-    with pytest.raises(SandboxInfrastructureError):
+    with pytest.raises(SandboxInfrastructureError, match="no such file or directory"):
         await run(fake)
 
     assert fake.count("exec") == 1
