@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vora-arc"
+version = "0.1.0"
+description = "ARC-AGI solver that runs model-written programs in Vora sandboxes"
+requires-python = ">=3.13"
+dependencies = ["vorash"]
+
+[project.scripts]
+vora-arc = "vora_arc.cli:main"
+
+[dependency-groups]
+dev = ["pytest", "pytest-asyncio", "mypy"]
+
+[tool.uv.sources]
+vorash = { git = "ssh://git@github-vorash/vorash/vora.git", subdirectory = "sdk/python", rev = "18b2481769116729d6e7c5cec3adf79249fa3ba0" }
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = ["sandbox: runs programs in a real Vora sandbox; needs VORA_API_URL and VORA_API_KEY"]
+
+[tool.mypy]
+strict = true
