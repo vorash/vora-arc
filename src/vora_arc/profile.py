@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,7 +27,10 @@ class Profile:
     output_tail_bytes: int
 
 
-def load_profile(path: Path = DEFAULT_PROFILE_PATH) -> Profile:
+def load_profile(path: Path | None = None) -> Profile:
+    """Load ``path``, else the file named by VORA_ARC_PROFILE, else python-arc.toml."""
+    if path is None:
+        path = Path(os.environ.get("VORA_ARC_PROFILE", DEFAULT_PROFILE_PATH))
     with path.open("rb") as file:
         raw = tomllib.load(file)
     sandbox = _table(raw, "sandbox")

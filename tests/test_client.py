@@ -20,9 +20,9 @@ from vora_arc import client
 from vora_arc.client import SandboxInfrastructureError, run_batch
 from vora_arc import model
 from vora_arc.model import GridStatus, Pair, RunStatus, Task
-from vora_arc.profile import load_profile
+from vora_arc.profile import DEFAULT_PROFILE_PATH, load_profile
 
-PROFILE = load_profile()
+PROFILE = load_profile(DEFAULT_PROFILE_PATH)
 PROGRAM = "def transform(grid):\n    return [row[::-1] for row in grid]\n"
 TASK = Task(
     id="t1",

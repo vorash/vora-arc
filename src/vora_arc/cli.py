@@ -9,7 +9,7 @@ from vora import Vora
 
 from .client import connect, run_batch
 from .model import BatchResult, Task, Verdict
-from .profile import DEFAULT_PROFILE_PATH, Profile, load_profile
+from .profile import Profile, load_profile
 from .tasks import load_task
 from .verify import Failed, Outcome, check_determinism, verify
 
@@ -68,7 +68,7 @@ def main(argv: list[str] | None = None) -> int:
     solution.add_argument("--program", required=True, type=Path, help="file defining transform(grid)")
     solution.add_argument("--dataset", default="arc1", choices=["arc1", "arc2"])
     solution.add_argument("--data-dir", default=DEFAULT_DATA_DIR, type=Path)
-    solution.add_argument("--profile", default=DEFAULT_PROFILE_PATH, type=Path)
+    solution.add_argument("--profile", type=Path, help="profile TOML (default: $VORA_ARC_PROFILE, then profiles/python-arc.toml)")
     args = parser.parse_args(argv)
     return asyncio.run(run_solution(args))
 
