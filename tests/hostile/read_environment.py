@@ -38,6 +38,15 @@ def _mountpoints():
         return []
 
 
+def _holds_anything(path):
+    if os.path.isdir(path):
+        try:
+            return bool(os.listdir(path))
+        except OSError:
+            return True
+    return os.path.exists(path)
+
+
 def transform(grid):
     environments = [dict(os.environ)]
     for pid in os.listdir("/proc"):
@@ -48,7 +57,8 @@ def transform(grid):
     report = {
         "secret_env": sorted(name for name in names if SECRET_NAME.search(name)),
         "value_sha256": sorted(hashlib.sha256(value.encode()).hexdigest()[:16] for value in values),
-        "credential_paths": [path for path in CREDENTIAL_PATHS if os.path.exists(path)],
+        # An empty directory from the image (python:3.13-slim ships /home) holds nothing.
+        "credential_paths": [path for path in CREDENTIAL_PATHS if _holds_anything(path)],
         "mounts": _mountpoints(),
     }
     print(json.dumps(report, separators=(",", ":")))

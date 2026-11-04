@@ -72,10 +72,16 @@ async def test_allocating_2gb_is_killed_at_the_memory_cap(vora: Vora) -> None:
     assert result.peak_mem_bytes <= PROFILE.memory_bytes
 
 
-async def test_fork_bomb_is_a_policy_violation(vora: Vora) -> None:
+async def test_fork_bomb_is_contained(vora: Vora) -> None:
     result = await run(vora, "fork_bomb")
 
-    assert result.run_status is RunStatus.POLICY_VIOLATION
+    if PROFILE.backend == "gvisor":
+        # gVisor's guest processes are not host processes, so the pids cgroup
+        # (which counts runsc's own threads) never trips; the bomb runs into
+        # the memory cap instead. Either way the run is killed, not the host.
+        assert result.run_status in (RunStatus.POLICY_VIOLATION, RunStatus.KILLED_OOM)
+    else:
+        assert result.run_status is RunStatus.POLICY_VIOLATION
 
 
 @pytest.mark.parametrize("name", ["outbound_http", "dns_lookup"])

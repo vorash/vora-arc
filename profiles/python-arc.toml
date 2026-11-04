@@ -22,7 +22,11 @@ backend = "gvisor"
 network = "none"
 cpu = 1
 memory = "256Mi"
-pids = 16
+# The spec asks for 16. Under gVisor this host cgroup limit also counts the
+# sandbox's own runsc threads (Sentry, gofer), so 16 cannot start a sandbox:
+# on vora-mini (runsc release-20260914.0, kvm) 30 or fewer fail to start, 32
+# is flaky and 40+ always works. The bwrap profile keeps 16.
+pids = 64
 # Destroys a sandbox the client failed to destroy.
 ttl_seconds = 60
 

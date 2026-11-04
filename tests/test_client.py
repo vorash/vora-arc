@@ -124,7 +124,8 @@ async def run(fake: FakeVora, program: str = PROGRAM) -> Any:
 def test_shipped_profile_holds_the_spec_v2_limits() -> None:
     # Spec section 3, V2: these are the limits every candidate runs under.
     assert (PROFILE.backend, PROFILE.network) == ("gvisor", "none")
-    assert (PROFILE.cpu_millis, PROFILE.memory_bytes, PROFILE.pids) == (1000, 256 * 1024 * 1024, 16)
+    # pids is 64, not the spec's 16: under gVisor the limit also counts runsc's own threads.
+    assert (PROFILE.cpu_millis, PROFILE.memory_bytes, PROFILE.pids) == (1000, 256 * 1024 * 1024, 64)
     assert (PROFILE.per_input_timeout_ms, PROFILE.batch_timeout_seconds) == (2000, 10)
     assert PROFILE.output_tail_bytes == 4096
 
@@ -137,7 +138,7 @@ async def test_sandbox_is_created_with_the_profile_limits_and_fed_the_protocol_o
     assert create["image"] == PROFILE.image
     assert create["backend"] == "gvisor"
     assert create["network"] == {"mode": "NETWORK_NONE"}
-    assert create["resources"] == {"cpuMillis": "1000", "memoryBytes": str(256 * 1024 * 1024), "pids": "16"}
+    assert create["resources"] == {"cpuMillis": "1000", "memoryBytes": str(256 * 1024 * 1024), "pids": "64"}
     # The TTL removes a sandbox whose destroy call failed.
     assert create["ttlSeconds"] == str(PROFILE.ttl_seconds)
 
