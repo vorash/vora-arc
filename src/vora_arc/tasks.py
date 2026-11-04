@@ -49,17 +49,17 @@ def parse_task(task_id: str, raw: object) -> Task:
         assert isinstance(cells, Sequence)
         return tuple(tuple(row) for row in cells)
 
+    if not isinstance(raw, dict):
+        raise fail("top level", f"expected an object, got {type(raw).__name__}")
+
     def cases(split: str) -> list[dict[str, object]]:
-        items = raw.get(split) if isinstance(raw, dict) else None
+        items = raw.get(split)
         if not isinstance(items, list) or not items:
             raise fail(split, "expected a non-empty list")
         for i, item in enumerate(items):
             if not isinstance(item, dict) or "input" not in item:
                 raise fail(f"{split}[{i}]", "expected an object with an input grid")
         return items
-
-    if not isinstance(raw, dict):
-        raise fail("top level", f"expected an object, got {type(raw).__name__}")
 
     train = []
     for i, item in enumerate(cases("train")):

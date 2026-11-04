@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SOLUTIONS = sorted((ROOT / "solutions").glob("*.py"))
 TRAINING = ROOT / "data" / "arc1" / "training"
 
-pytestmark = pytest.mark.skipif(
+needs_data = pytest.mark.skipif(
     not TRAINING.is_dir(), reason="ARC data not downloaded; run scripts/download_data.sh"
 )
 
@@ -42,6 +42,7 @@ def test_there_are_ten_solutions() -> None:
     assert len(SOLUTIONS) == 10
 
 
+@needs_data
 @pytest.mark.parametrize("path", SOLUTIONS, ids=lambda p: p.stem)
 def test_solution_solves_every_train_and_test_pair(path: Path) -> None:
     task, transform = load(path)
@@ -52,6 +53,7 @@ def test_solution_solves_every_train_and_test_pair(path: Path) -> None:
         assert run(transform, case.input) == case.output, f"test[{i}]"
 
 
+@needs_data
 @pytest.mark.parametrize("path", SOLUTIONS, ids=lambda p: p.stem)
 def test_solution_passes_verify_given_a_faithful_run(path: Path) -> None:
     # Catches a solution that verify would reject even with a perfect sandbox,

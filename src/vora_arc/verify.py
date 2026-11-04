@@ -50,8 +50,10 @@ def verify(task: Task, program: str | None, result: BatchResult | None = None) -
     run to pass. A `passed` outcome has not been checked for determinism yet;
     see `check_determinism`.
     """
-    if program is None or result is None:
+    if program is None:
         return Judged(Verdict.UNPARSEABLE)
+    if result is None:
+        raise ValueError("a parsed program needs a batch result to judge")
 
     if result.run_status is RunStatus.KILLED_TIMEOUT:
         return Judged(Verdict.TIMEOUT)

@@ -56,6 +56,12 @@ def test_no_extracted_program_is_unparseable() -> None:
     assert verify(TASK, None) == Judged(Verdict.UNPARSEABLE)
 
 
+def test_parsed_program_without_a_run_is_an_error() -> None:
+    # Not unparseable: the program exists, the caller just never ran it.
+    with pytest.raises(ValueError, match="needs a batch result"):
+        verify(TASK, GOOD, None)  # type: ignore[call-overload]
+
+
 @pytest.mark.parametrize(
     ("run_status", "verdict"),
     [
