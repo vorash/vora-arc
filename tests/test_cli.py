@@ -70,7 +70,7 @@ def test_a_correct_program_passes_after_a_second_identical_run(
 ) -> None:
     calls = sandbox_returns(monkeypatch, batch(((2, 1),)), batch(((2, 1),)))
     assert run_solution(workspace) == 0
-    assert calls == ["abcd1234/solution", "abcd1234/solution"], "a pass is only trusted after a re-run"
+    assert calls == ["abcd1234/solution", "abcd1234/solution/rerun"], "a pass is only trusted after a re-run"
     out = capsys.readouterr().out
     assert "verdict: passed" in out
     assert "sandbox=sbx_1" in out

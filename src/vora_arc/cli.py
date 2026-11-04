@@ -30,7 +30,7 @@ async def judge(vora: Vora, profile: Profile, task: Task, program: str, correlat
     outcome = verify(task, program, first)
     if outcome.verdict is not Verdict.PASSED:
         return outcome, [first]
-    second = await run_batch(vora, profile, program, task, correlation_id=correlation_id)
+    second = await run_batch(vora, profile, program, task, correlation_id=f"{correlation_id}/rerun")
     return check_determinism(first, second), [first, second]
 
 

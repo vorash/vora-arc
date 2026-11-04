@@ -5,8 +5,11 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import subprocess
+import sys
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -350,3 +353,31 @@ async def test_runner_stderr_is_cut_to_the_output_tail_when_the_done_line_is_mis
     assert len(result.stderr_tail.encode()) == PROFILE.output_tail_bytes
     assert result.stderr_tail.endswith("Traceback: the end")
     assert [g.status for g in result.grids] == [GridStatus.ERROR] * 3
+
+
+@dataclass
+class RunnerBackedVora(FakeVora):
+    """Answers exec by running the real sandbox/runner.py on the stdin the client sent."""
+
+    def route(self, request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path.endswith("/exec"):
+            stdin = base64.b64decode(json.loads(request.content)["stdin"])
+            runner = Path(__file__).resolve().parents[1] / "sandbox" / "runner.py"
+            proc = subprocess.run([sys.executable, str(runner)], input=stdin, capture_output=True, timeout=30, check=True)
+            self.exec_chunks = [raw_stdout(proc.stdout), exit_("EXITED")]
+        return super().route(request)
+
+
+async def test_client_reads_what_the_real_runner_writes() -> None:
+    # The runner and the client were written against PROTOCOL.md separately;
+    # this is the only host test where one consumes the other's actual bytes.
+    program = PROGRAM + "\nprint('hello from the program')\n"
+    result = await run(RunnerBackedVora(), program)
+
+    assert result.run_status is RunStatus.COMPLETED
+    assert [(g.index, g.is_test, g.status, g.output) for g in result.grids] == [
+        (0, False, GridStatus.OK, ((2, 1),)),
+        (1, False, GridStatus.OK, ((4, 3),)),
+        (2, True, GridStatus.OK, ((6, 5),)),
+    ]
+    assert "hello from the program" in result.stderr_tail

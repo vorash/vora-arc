@@ -14,6 +14,8 @@ class Pair:
 
 @dataclass(frozen=True)
 class TestCase:
+    __test__ = False  # not a pytest class, despite the name
+
     input: Grid
     output: Grid | None
 
