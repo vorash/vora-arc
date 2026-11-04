@@ -69,8 +69,8 @@ def verify(task: Task, program: str | None, result: BatchResult | None = None) -
 
     outputs: list[Grid] = []
     for g in train:
-        # The program shares a process with the runner and can write its own
-        # result lines, so an OK status alone does not prove a valid grid.
+        # The program runs in the worker that reports its results and can
+        # forge them, so an OK status alone does not prove a valid grid.
         if g.status is not GridStatus.OK or g.output is None or grid_problem(g.output) is not None:
             return Judged(Verdict.INVALID)
         outputs.append(g.output)
