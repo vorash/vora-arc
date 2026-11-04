@@ -7,7 +7,7 @@ name = "vora-arc"
 version = "0.1.0"
 description = "ARC-AGI solver that runs model-written programs in Vora sandboxes"
 requires-python = ">=3.13"
-dependencies = ["vorash"]
+dependencies = ["vorash", "httpx>=0.27"]
 
 [project.scripts]
 vora-arc = "vora_arc.cli:main"
@@ -20,7 +20,10 @@ vorash = { git = "ssh://git@github-vorash/vorash/vora.git", subdirectory = "sdk/
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 markers = ["sandbox: runs programs in a real Vora sandbox; needs VORA_API_URL and VORA_API_KEY"]
 
 [tool.mypy]
 strict = true
+# Hostile programs are sandbox payloads, not package code.
+exclude = ["^tests/hostile/"]

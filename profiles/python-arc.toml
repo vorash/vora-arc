@@ -14,9 +14,9 @@
 name = "python-arc"
 
 [sandbox]
-# The image built from sandbox/. The tag and the runner path are a contract
-# with the image build.
-image = "vora-arc/python-arc:m1"
+# Built and imported by sandbox/build.sh. The tag and the runner path are a
+# contract with sandbox/Dockerfile.
+image = "vora/arc"
 runner_command = ["python3", "/opt/vora-arc/runner.py"]
 backend = "gvisor"
 network = "none"

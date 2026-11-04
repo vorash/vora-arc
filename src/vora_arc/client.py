@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -36,6 +38,16 @@ _UNREPORTED_INPUT_STATUS: dict[RunStatus, GridStatus] = {
 
 class SandboxInfrastructureError(Exception):
     """Vora failed in a way that says nothing about the program."""
+
+
+@contextlib.asynccontextmanager
+async def connect(profile: Profile) -> AsyncIterator[Vora]:
+    """A Vora client for ``run_batch``, configured from VORA_API_URL and VORA_API_KEY."""
+    # httpx's 5 s default read timeout is shorter than a batch that prints
+    # nothing for 10 s, and a timeout would be retried as a transport error.
+    timeout = httpx.Timeout(profile.batch_timeout_seconds + 30.0)
+    async with httpx.AsyncClient(timeout=timeout) as http:
+        yield Vora(client=http)
 
 
 async def run_batch(

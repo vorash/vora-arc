@@ -11,12 +11,11 @@ import os
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-import httpx
 import pytest
 from vora import Vora
 
 from vora_arc import model
-from vora_arc.client import run_batch
+from vora_arc.client import connect, run_batch
 from vora_arc.model import BatchResult, GridStatus, Pair, RunStatus, Task
 from vora_arc.profile import load_profile
 
@@ -42,10 +41,8 @@ TASK = Task(
 
 @pytest.fixture
 async def vora() -> AsyncIterator[Vora]:
-    # httpx's 5 s default read timeout is shorter than a 10 s batch that prints nothing.
-    timeout = httpx.Timeout(PROFILE.batch_timeout_seconds + 30.0)
-    async with httpx.AsyncClient(timeout=timeout) as http:
-        yield Vora(client=http)
+    async with connect(PROFILE) as client:
+        yield client
 
 
 async def run(vora: Vora, name: str) -> BatchResult:

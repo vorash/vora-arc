@@ -439,6 +439,7 @@ name = "vora-arc"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "httpx" },
     { name = "vorash" },
 ]
 
@@ -451,7 +452,10 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "vorash", git = "ssh://git@github-vorash/vorash/vora.git?subdirectory=sdk%2Fpython&rev=18b2481769116729d6e7c5cec3adf79249fa3ba0" }]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "vorash", git = "ssh://git@github-vorash/vorash/vora.git?subdirectory=sdk%2Fpython&rev=18b2481769116729d6e7c5cec3adf79249fa3ba0" },
+]
 
 [package.metadata.requires-dev]
 dev = [
