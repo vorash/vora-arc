@@ -1,0 +1,32 @@
+# Runtime profile python-arc (spec section 3, V2).
+#
+# Vora enforces the [sandbox] limits through cgroup v2 and gVisor. The runner
+# enforces the [runner] limits inside the sandbox.
+#
+# Spec settings Vora cannot express yet (M2, Vora profile work), so this file
+# does not set them:
+#   - user: non-root. The sandbox runs as root inside a user namespace.
+#   - writable storage: a 16 MB tmpfs at /tmp with a read-only root. Today
+#     /workspace and /root are writable and /tmp has no size cap.
+#   - per-stream 4 KB caps on stdout and stderr. Vora streams exec output
+#     uncapped; the runner keeps the 4 KB tail and the client caps what it keeps.
+
+name = "python-arc"
+
+[sandbox]
+# The image built from sandbox/. The tag and the runner path are a contract
+# with the image build.
+image = "vora-arc/python-arc:m1"
+runner_command = ["python3", "/opt/vora-arc/runner.py"]
+backend = "gvisor"
+network = "none"
+cpu = 1
+memory = "256Mi"
+pids = 16
+# Destroys a sandbox the client failed to destroy.
+ttl_seconds = 60
+
+[runner]
+per_input_timeout_ms = 2000
+batch_timeout_seconds = 10
+output_tail_bytes = 4096
