@@ -134,7 +134,11 @@ def parse_grid(value: object) -> list[list[int]]:
 def exit_description(status: int) -> str:
     code = os.waitstatus_to_exitcode(status)
     if code < 0:
-        return f"worker was killed by {signal.Signals(-code).name}"
+        try:
+            name = signal.Signals(-code).name
+        except ValueError:
+            name = f"signal {-code}"
+        return f"worker was killed by {name}"
     return f"worker exited with code {code}"
 
 
@@ -242,10 +246,16 @@ class Worker:
         return "worker closed its result channel"
 
     def kill(self) -> None:
-        try:
-            os.killpg(self.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        # The group takes any children the program started; the worker itself
+        # is killed by pid too because it can move to another group.
+        targets = [(os.killpg, self.pid)]
+        if self.status is None:
+            targets.append((os.kill, self.pid))
+        for send_kill, target in targets:
+            try:
+                send_kill(target, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
         if self.status is None:
             os.waitpid(self.pid, 0)
         os.close(self.result_fd)

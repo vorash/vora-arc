@@ -14,6 +14,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 RUNNER = Path(__file__).resolve().parents[1] / "sandbox" / "runner.py"
 TIMEOUT_MS = 300
 GRIDS = [[[0, 1], [2, 3]], [[4]], [[5, 6, 7]]]
@@ -142,26 +144,57 @@ def test_garbage_on_the_result_pipe_errors_that_input_only() -> None:
     assert "malformed" in results[1]["error"]
 
 
-def test_invalid_outputs_are_rejected_with_a_reason() -> None:
-    cases = {
-        "None": ("None", "NoneType"),
-        "ragged": ("[[1, 2], [3]]", "row 1 has 1 cells but row 0 has 2"),
-        "value 11": ("[[1, 11]]", "cell [0][1] is 11"),
-        "negative": ("[[-1]]", "cell [0][0] is -1"),
-        "bool": ("[[True]]", "bool"),
-        "float": ("[[1.0]]", "float"),
-        "tuple rows": ("[(1, 2)]", "row 0 is tuple"),
-        "empty": ("[]", "no rows"),
-        "empty row": ("[[]]", "row 0 has no cells"),
-        "31 rows": ("[[0]] * 31", "more than 30 rows"),
-        "31 columns": ("[[0] * 31]", "more than 30 cells"),
-        "31x31": ("[[0] * 31 for _ in range(31)]", "more than 30"),
-        "huge int": ("[[10**100]]", "large int"),
-    }
-    for name, (expr, reason) in cases.items():
-        results, _ = run(f"def transform(grid):\n    return {expr}\n", grids=[[[0]]])
-        assert statuses(results) == ["INVALID"], name
-        assert reason in results[0]["error"], (name, results[0]["error"])
+def test_worker_killed_by_a_realtime_signal_keeps_the_others() -> None:
+    results, _ = run(
+        """
+        import os, signal
+        def transform(grid):
+            if grid == [[4]]:
+                os.kill(os.getpid(), signal.SIGRTMIN + 1)
+            return grid
+        """
+    )
+    assert statuses(results) == ["OK", "ERROR", "OK"]
+    assert "killed by" in results[1]["error"]
+
+
+def test_worker_that_leaves_its_process_group_is_still_cut_off() -> None:
+    results, _ = run(
+        """
+        import os
+        def transform(grid):
+            if grid == [[4]]:
+                os.setpgid(0, os.getpgid(os.getppid()))
+                while True:
+                    pass
+            return grid
+        """
+    )
+    assert statuses(results) == ["OK", "TIMEOUT", "OK"]
+
+
+@pytest.mark.parametrize(
+    ("expr", "reason"),
+    [
+        pytest.param("None", "NoneType", id="None"),
+        pytest.param("[[1, 2], [3]]", "row 1 has 1 cells but row 0 has 2", id="ragged"),
+        pytest.param("[[1, 11]]", "cell [0][1] is 11", id="value 11"),
+        pytest.param("[[-1]]", "cell [0][0] is -1", id="negative"),
+        pytest.param("[[True]]", "bool", id="bool"),
+        pytest.param("[[1.0]]", "float", id="float"),
+        pytest.param("[(1, 2)]", "row 0 is tuple", id="tuple row"),
+        pytest.param("[]", "no rows", id="empty"),
+        pytest.param("[[]]", "row 0 has no cells", id="empty row"),
+        pytest.param("[[0]] * 31", "more than 30 rows", id="31 rows"),
+        pytest.param("[[0] * 31]", "more than 30 cells", id="31 columns"),
+        pytest.param("[[0] * 31 for _ in range(31)]", "more than 30", id="31x31"),
+        pytest.param("[[10**100]]", "large int", id="huge int"),
+    ],
+)
+def test_invalid_outputs_are_rejected_with_a_reason(expr: str, reason: str) -> None:
+    results, _ = run(f"def transform(grid):\n    return {expr}\n", grids=[[[0]]])
+    assert statuses(results) == ["INVALID"]
+    assert reason in results[0]["error"]
 
 
 def test_30x30_is_the_largest_valid_output() -> None:
