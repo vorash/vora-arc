@@ -182,7 +182,6 @@ def test_worker_that_leaves_its_process_group_is_still_cut_off() -> None:
         pytest.param("[[-1]]", "cell [0][0] is -1", id="negative"),
         pytest.param("[[True]]", "bool", id="bool"),
         pytest.param("[[1.0]]", "float", id="float"),
-        pytest.param("[(1, 2)]", "row 0 is tuple", id="tuple row"),
         pytest.param("[]", "no rows", id="empty"),
         pytest.param("[[]]", "row 0 has no cells", id="empty row"),
         pytest.param("[[0]] * 31", "more than 30 rows", id="31 rows"),
@@ -193,6 +192,35 @@ def test_worker_that_leaves_its_process_group_is_still_cut_off() -> None:
 )
 def test_invalid_outputs_are_rejected_with_a_reason(expr: str, reason: str) -> None:
     results, _ = run(f"def transform(grid):\n    return {expr}\n", grids=[[[0]]])
+    assert statuses(results) == ["INVALID"]
+    assert reason in results[0]["error"]
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        pytest.param("np.array(grid)[:, ::-1]", id="ndarray"),
+        pytest.param("[list(row) for row in np.array(grid)[:, ::-1]]", id="rows of numpy ints"),
+        pytest.param("tuple(tuple(row[::-1]) for row in grid)", id="tuples"),
+    ],
+)
+def test_numpy_and_tuple_results_count_as_grids(expr: str) -> None:
+    # Model-written programs return these all the time; rejecting them would
+    # mark correct answers INVALID.
+    results, _ = run(f"import numpy as np\ndef transform(grid):\n    return {expr}\n", grids=[[[1, 2]]])
+    assert statuses(results) == ["OK"]
+    assert results[0]["output"] == [[2, 1]]
+
+
+@pytest.mark.parametrize(
+    ("expr", "reason"),
+    [
+        pytest.param("np.array(grid, dtype=float)", "float", id="float array"),
+        pytest.param("np.array(grid) > 0", "bool", id="bool array"),
+    ],
+)
+def test_numpy_values_that_are_not_ints_stay_invalid(expr: str, reason: str) -> None:
+    results, _ = run(f"import numpy as np\ndef transform(grid):\n    return {expr}\n", grids=[[[1, 2]]])
     assert statuses(results) == ["INVALID"]
     assert reason in results[0]["error"]
 

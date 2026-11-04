@@ -338,23 +338,39 @@ def encode(value: object) -> object:
     Anything that is not an exact list or int becomes a {"type": name} marker,
     and lists are cut at MAX_SIDE + 1 so a huge result stays a small message.
     """
-    if type(value) is not list:
+    value = from_numpy(value)
+    if type(value) not in (list, tuple):
         return {"type": type(value).__name__}
-    return [encode_row(row) for row in value[: MAX_SIDE + 1]]
+    return [encode_row(row) for row in value[: MAX_SIDE + 1]]  # type: ignore[index]
 
 
 def encode_row(row: object) -> object:
-    if type(row) is not list:
+    row = from_numpy(row)
+    if type(row) not in (list, tuple):
         return {"type": type(row).__name__}
-    return [encode_cell(cell) for cell in row[: MAX_SIDE + 1]]
+    return [encode_cell(cell) for cell in row[: MAX_SIDE + 1]]  # type: ignore[index]
 
 
 def encode_cell(cell: object) -> object:
+    cell = from_numpy(cell)
     if type(cell) is bool:
         return cell
     if type(cell) is int:
         return cell if -LARGE_INT < cell < LARGE_INT else {"type": "large int"}
     return {"type": type(cell).__name__}
+
+
+def from_numpy(value: object) -> object:
+    # Model-written programs routinely return arrays or numpy ints. Converting
+    # them here keeps those answers; the parent still validates the result.
+    kind = type(value)
+    if kind.__module__ != "numpy":
+        return value
+    if kind.__name__ == "ndarray":
+        return value.tolist()  # type: ignore[attr-defined]
+    if kind.__name__.startswith(("int", "uint")):
+        return int(value)  # type: ignore[call-overload]
+    return value
 
 
 def format_error(e: BaseException) -> str:
