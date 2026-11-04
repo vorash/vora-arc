@@ -320,7 +320,8 @@ async def test_lines_that_are_not_protocol_results_are_ignored() -> None:
     # A program that writes to fd 1 must not be able to inject or corrupt results.
     fake = FakeVora(
         exec_chunks=[
-            raw_stdout(b"hello from transform\n[1, 2]\n" + b"x" * (client.MAX_LINE_BYTES + 10) + b"\n"),
+            raw_stdout(b"hello from transform\n[1, 2]\n"),
+            stdout({**ok(1, [[4, 3]]), "pad": "x" * client.MAX_LINE_BYTES}),
             stdout(ok(0, [[2, 1]]), ok(7, [[9]]), {"index": 1, "status": "OK", "output": None, "error": None, "wall_ms": 1}),
             stdout(ok(0, [[0]]), done()),
             exit_("EXITED"),

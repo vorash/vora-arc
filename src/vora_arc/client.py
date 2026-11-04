@@ -243,8 +243,9 @@ class _LineBuffer:
         *ended, rest = data.split(b"\n")
         lines: list[bytes] = []
         for part in ended:
-            if not self._skipping:
-                lines.append(bytes(self._pending + part))
+            line = self._pending + part
+            if not self._skipping and len(line) <= MAX_LINE_BYTES:
+                lines.append(bytes(line))
             self._pending.clear()
             self._skipping = False
         if not self._skipping:
