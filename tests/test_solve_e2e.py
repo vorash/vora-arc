@@ -10,12 +10,14 @@ import asyncio
 import json
 import os
 import shutil
+import signal
 from pathlib import Path
 from typing import Any
 
 import psycopg
 import pytest
 from fake_model import FakeModel, fenced
+from vora._client import Sandboxes
 
 from vora_arc import cli
 from vora_arc.client import connect
@@ -188,6 +190,8 @@ def test_solve_runs_every_kind_of_program_in_real_sandboxes(
         assert "| 16 | 3 / 3 (100.0%) |" not in text, "the refined task isn't solved on round 1 samples"
         assert f"| 16 | {'2 / 3 (66.7%)' if real_data else '1 / 2 (50.0%)'} |" in text
         assert "| 32 | not measured |" in text, "the run took 16 samples per task"
+        assert "Cost per task: not measured" not in text, "every completion was fresh"
+        assert " EUR on wall-clock, " in text and " EUR as the lower bound" in text
         for chart in ("verdicts.png", "accuracy_vs_candidates.png"):
             assert (tmp_path / "results" / run_id / chart).exists()
 
@@ -199,3 +203,34 @@ def test_solve_runs_every_kind_of_program_in_real_sandboxes(
 
         assert cli.main(args) == 0
         assert len(server.requests) == first_requests, "the second run judges again but must not pay the model again"
+
+
+def test_ctrl_c_destroys_every_sandbox_it_created(
+    data_dir: Path, database_url: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    hang = (HOSTILE / "infinite_loop.py").read_text()
+    programs = [f"{hang}\n# variant {number}\n" for number in range(6)]
+    server = FakeModel(lambda prompt: [fenced(program) for program in programs])
+    created: list[str] = []
+    create = Sandboxes.create
+
+    async def create_then_press_ctrl_c(self: Sandboxes, **options: Any) -> Any:
+        sandbox = await create(self, **options)
+        created.append(sandbox.id)
+        if len(created) == 2:
+            # A moment later, so that some jobs are mid-create and some are running a program.
+            asyncio.get_running_loop().call_later(0.2, os.kill, os.getpid(), signal.SIGINT)
+        return sandbox
+
+    monkeypatch.setattr(Sandboxes, "create", create_then_press_ctrl_c)
+    with server.running():
+        monkeypatch.setenv("VLLM_URL", server.url)
+        monkeypatch.setenv("VLLM_MODEL", "fake-model")
+        monkeypatch.setenv("VORA_ARC_DATABASE_URL", database_url)
+        monkeypatch.setenv("VORA_MAX_CONCURRENCY", "4")
+        with pytest.raises(KeyboardInterrupt):
+            cli.main(["solve", "--split", "training", "--limit", "1", "--samples", "6", "--data-dir", str(data_dir)])
+
+    assert len(created) >= 2, "real sandboxes must have been running when Ctrl-C arrived"
+    assert query(database_url, "SELECT status FROM solve_runs") == [("interrupted",)]
+    assert asyncio.run(live_sandboxes(set(created))) == set(), "every sandbox was destroyed"
