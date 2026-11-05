@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version-file: .python-version
+      - run: uv sync --frozen
+      # Sandbox tests need a Vora host and skip here. Run them with `pytest -m sandbox`.
+      - run: uv run pytest -q
+      - run: uv run mypy src tests
