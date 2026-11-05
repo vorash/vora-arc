@@ -22,8 +22,25 @@ VORA_ARC_PROFILE=profiles/python-arc-bwrap.toml … uv run pytest -m sandbox
 | runner exec (same runs) | 88-98 ms | 60-61 ms |
 
 Timings were measured from the laptop through an SSH tunnel to the API, so they
-include one round trip each. Nobody has explained the 10x create gap yet. A
-guess: bwrap starts every sandbox as a `systemd-run` transient unit.
+include one round trip each.
+
+### Update: Vora v0.10.3 (2026-11-04)
+
+The sandbox suite was re-run on v0.10.3, and the hostile suite now gives gVisor
+12 pass, 3 expected failures, and bwrap 11 pass, 4 expected failures. The
+hand-written solutions pass 10 / 10 on both. The bwrap gain is the 2 GB
+allocation's peak memory (vorash/vora#108): since v0.10.3 a bwrap sandbox
+survives an OOM in an exec and keeps its stats.
+
+The 10x create gap above was not bwrap or systemd. gRPC's reconnect backoff made
+the runner wait about 1 s before retrying the agent's socket (vorash/vora#114,
+fixed in v0.10.2). Measured on vora-mini through the CLI, a different method from
+the table above, v0.10.2 creates a bwrap sandbox in 183-187 ms and a gVisor sandbox
+in 108-125 ms. The bwrap runner exec is also cheaper since v0.10.3: a `/bin/true`
+exec through the CLI went from a median 19.8 ms to 10.3 ms.
+
+v0.10.3 did not change gVisor. A gVisor sandbox that goes over its memory limit
+still dies, and later execs report `EXITED` with exit code 128 (vorash/vora#120).
 
 **pids under gVisor.** The spec's 16-process limit can't start a gVisor
 sandbox. The host cgroup also counts runsc's own threads: 30 or fewer fail to
@@ -38,7 +55,6 @@ run is killed, and the host is not affected.
 |---|---|---|
 | write to `/workspace`, `/root` | writable in every Vora sandbox | M2, Vora profile work |
 | fill `/tmp` past 16 MB | `/tmp` size is not configurable | M2, Vora profile work |
-| 2 GB allocation: peak memory (bwrap only) | the OOM kill is reported, but Vora returns no memory stats for the dead sandbox (vorash/vora#108); gVisor reports it | Vora |
 | env / `/proc` probe (bwrap only) | bwrap sandboxes inherit the systemd user manager's environment: `SSH_AUTH_SOCK`, `DBUS_SESSION_BUS_ADDRESS`, `XDG_RUNTIME_DIR` and more. The paths are not mounted in the sandbox, so the sockets are unreachable (vorash/vora#107). | Vora |
 
 ## Not done
