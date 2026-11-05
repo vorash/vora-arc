@@ -24,17 +24,17 @@ VORA_ARC_PROFILE=profiles/python-arc-bwrap.toml … uv run pytest -m sandbox
 Timings were measured from the laptop through an SSH tunnel to the API, so they
 include one round trip each.
 
-### Update: Vora v0.10.4 (2026-11-05)
+### Update: Vora v0.10.5 (2026-11-05)
 
-The sandbox suite was re-run on v0.10.4. The hostile suite gives gVisor 12 pass, 3
-expected failures, and bwrap 11 pass, 4 expected failures. The hand-written
-solutions pass 10 / 10 on both. The bwrap gain is the 2 GB allocation's peak memory
-(vorash/vora#108): since v0.10.3 a bwrap sandbox survives an OOM in an exec and keeps
-its stats.
+The sandbox suite was re-run on v0.10.5. The hostile suite gives gVisor 12 pass, 3
+expected failures, and bwrap 12 pass, 3 expected failures, the same set on both. The
+hand-written solutions pass 10 / 10 on both. bwrap gained two: the 2 GB allocation's
+peak memory (vorash/vora#108, since v0.10.3), and the environment probe
+(vorash/vora#107, since v0.10.5).
 
 **Skip v0.10.3 on bwrap.** Its OOM shim needs OS threads that count against `pids`,
 so at this profile's `pids = 16` 8 of 40 runs of the solution suite failed. On v0.10.4,
-40 of 40 passed. A long-lived sandbox is still at risk at this limit: after about 50
+40 of 40 passed, and on v0.10.5 25 of 25. A long-lived sandbox is still at risk at this limit: after about 50
 execs in one sandbox on a 16-core host, `vora-init`'s threads use up the limit
 (vorash/vora#125). This harness runs one exec per sandbox, so it isn't affected yet,
 but warm pools would be.
@@ -55,7 +55,6 @@ A gVisor sandbox that goes over its memory limit still dies, and later execs rep
 |---|---|---|
 | write to `/workspace`, `/root` | writable in every Vora sandbox | M2, Vora profile work |
 | fill `/tmp` past 16 MB | `/tmp` size is not configurable | M2, Vora profile work |
-| env / `/proc` probe (bwrap only) | bwrap sandboxes inherit the systemd user manager's environment: `SSH_AUTH_SOCK`, `DBUS_SESSION_BUS_ADDRESS`, `XDG_RUNTIME_DIR` and more. The paths are not mounted in the sandbox, so the sockets are unreachable (vorash/vora#107). | Vora |
 
 ## Not done
 
