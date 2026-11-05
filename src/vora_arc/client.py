@@ -134,15 +134,7 @@ class _Run:
 
 async def _run_once(vora: Vora, profile: Profile, stdin: str, is_test: tuple[bool, ...]) -> _Run:
     started = time.monotonic()
-    sandbox = await vora.sandboxes.create(
-        image=profile.image,
-        backend=profile.backend,
-        network=profile.network,
-        cpu=f"{profile.cpu_millis}m",
-        memory=profile.memory_bytes,
-        pids=profile.pids,
-        ttl=profile.ttl_seconds,
-    )
+    sandbox = await _create(vora, profile)
     startup_ms = _elapsed_ms(started)
     try:
         exec_started = time.monotonic()
@@ -155,6 +147,27 @@ async def _run_once(vora: Vora, profile: Profile, stdin: str, is_test: tuple[boo
     finally:
         await _destroy(sandbox, profile)
     return _Run(sandbox.id, startup_ms, exec_ms, output, stats)
+
+
+async def _create(vora: Vora, profile: Profile) -> Sandbox:
+    creating = asyncio.ensure_future(
+        vora.sandboxes.create(
+            image=profile.image,
+            backend=profile.backend,
+            network=profile.network,
+            cpu=f"{profile.cpu_millis}m",
+            memory=profile.memory_bytes,
+            pids=profile.pids,
+            ttl=profile.ttl_seconds,
+        )
+    )
+    try:
+        return await asyncio.shield(creating)
+    except asyncio.CancelledError:
+        # The server may already be building it, and only the response names what to destroy.
+        with contextlib.suppress(VoraError, httpx.HTTPError):
+            await _destroy(await creating, profile)
+        raise
 
 
 async def _exec(sandbox: Sandbox, profile: Profile, stdin: str, is_test: tuple[bool, ...]) -> _Exec:

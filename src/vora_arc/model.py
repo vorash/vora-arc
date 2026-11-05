@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import StrEnum
 
 Grid = tuple[tuple[int, ...], ...]
+
+_URL_USERINFO = re.compile(r"(?<=://)[^/\s]*@")
 
 
 @dataclass(frozen=True)
@@ -74,3 +77,13 @@ class Verdict(StrEnum):
     MEMORIZED = "memorized"
     NONDETERMINISTIC = "nondeterministic"
     PASSED = "passed"
+
+
+def storable_text(text: str) -> str:
+    """Make untrusted text safe for PostgreSQL, which rejects NUL and lone surrogates."""
+    return text.replace("\x00", "�").encode("utf-8", "replace").decode("utf-8")
+
+
+def redact_userinfo(text: str) -> str:
+    """Remove the credentials from any URL in `text`."""
+    return _URL_USERINFO.sub("", text)

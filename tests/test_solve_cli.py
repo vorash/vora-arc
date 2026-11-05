@@ -1,0 +1,333 @@
+"""`vora-arc solve` and `report` on a real PostgreSQL and the fake model, with canned sandbox results."""
+
+from __future__ import annotations
+
+import contextlib
+import asyncio
+import base64
+import json
+import logging
+import os
+import signal
+import time
+from collections.abc import AsyncIterator, Iterator
+from pathlib import Path
+from typing import Any
+
+import psycopg
+import pytest
+from canned_runs import CLOSE, GOOD, JUNK, WRONG, CannedRuns, completions
+from fake_model import FakeModel
+from vora import VoraError
+
+from vora_arc import cli, generate, schedule
+from vora_arc.report import NOT_MEASURED
+from vora_arc.store import Store
+
+GRID_TASK = {
+    "train": [{"input": [[1, 2]], "output": [[2, 1]]}, {"input": [[3, 4]], "output": [[4, 3]]}],
+    "test": [{"input": [[5, 6]], "output": [[6, 5]]}],
+}
+
+
+class Solver:
+    def __init__(self, root: Path, model: FakeModel, runs: CannedRuns) -> None:
+        self.root, self.model, self.runs = root, model, runs
+
+    def solve(self, *extra: str) -> int:
+        return cli.main(["solve", "--split", "training", "--data-dir", str(self.root), *extra])
+
+    def report(self, run_id: str) -> str:
+        assert cli.main(["report", "--run", run_id, "--out", str(self.root / "results")]) == 0
+        return (self.root / "results" / run_id / "report.md").read_text()
+
+
+@pytest.fixture
+def solver(tmp_path: Path, database_url: str, monkeypatch: pytest.MonkeyPatch) -> Iterator[Solver]:
+    split = tmp_path / "arc1" / "training"
+    split.mkdir(parents=True)
+    for name in ("aaaa0001", "bbbb0002", "cccc0003"):
+        (split / f"{name}.json").write_text(json.dumps(GRID_TASK))
+
+    @contextlib.asynccontextmanager
+    async def fake_connect(profile: Any) -> AsyncIterator[None]:
+        yield None
+
+    monkeypatch.setattr(cli, "connect", fake_connect)
+    monkeypatch.setattr(generate, "RETRY_DELAYS_S", (0.0,))
+    monkeypatch.delenv("GPU_EUR_PER_HOUR", raising=False)
+    server = FakeModel(lambda prompt: completions(GOOD, GOOD, WRONG, JUNK))
+    with server.running():
+        monkeypatch.setenv("VLLM_URL", server.url)
+        monkeypatch.setenv("VLLM_MODEL", "fake-model")
+        monkeypatch.setenv("VORA_ARC_DATABASE_URL", database_url)
+        yield Solver(tmp_path, server, CannedRuns(monkeypatch))
+
+
+def run_ids(capsys: pytest.CaptureFixture[str]) -> list[str]:
+    return [line.split()[1].rstrip(":") for line in capsys.readouterr().out.splitlines() if line.startswith("run ")][::2]
+
+
+def query(url: str, sql: str) -> list[tuple[Any, ...]]:
+    with psycopg.connect(url) as connection:
+        return connection.execute(sql.encode()).fetchall()
+
+
+def database_text(url: str) -> str:
+    tables = query(url, "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")
+    assert tables, "an empty dump would prove nothing"
+    return "\n".join(str(query(url, f'SELECT row_to_json(t)::text FROM "{table}" t')) for table, in tables)
+
+
+@pytest.mark.parametrize(
+    "faults",
+    [[500, 500], ["drop", "drop"], [(400, "<html><h1>Bad</h1>asked http://user:secret@gpu/v1</html>")]],
+    ids=["gave-up", "connection-dropped", "error-page-echoing-the-url"],
+)
+def test_a_password_in_the_model_url_reaches_no_log_database_or_report(
+    solver: Solver,
+    database_url: str,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    faults: list[Any],
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    monkeypatch.setenv("VLLM_URL", solver.model.url.replace("http://", "http://user:secret@"))
+    assert solver.solve("--samples", "4", "--limit", "1") == 0
+    good_run = run_ids(capsys)[0]
+    assert solver.model.requests[0]["authorization"] == "Basic " + base64.b64encode(b"user:secret").decode(), (
+        "the server must still get the credentials"
+    )
+
+    solver.model.faults.extend(faults)
+    assert solver.solve("--samples", "4", "--limit", "2") == 1
+    captured = capsys.readouterr()
+    failed = query(database_url, "SELECT id, error FROM solve_runs WHERE status = 'failed'")
+    assert len(failed) == 1 and failed[0][1], "the failure itself must be recorded"
+    reports = solver.report(good_run) + solver.report(failed[0][0])
+
+    assert "chat/completions" in captured.err, "the host is still named, so the error stays useful"
+    for sink, text in {
+        "log": caplog.text,
+        "stdout": captured.out,
+        "stderr": captured.err,
+        "database": database_text(database_url),
+        "report": reports,
+    }.items():
+        assert "secret" not in text, f"the password reached the {sink}"
+
+
+def test_a_run_stores_every_result_and_a_report_reads_them(
+    solver: Solver, database_url: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert solver.solve("--samples", "4", "--limit", "2") == 0
+    run_id = run_ids(capsys)[0]
+    assert query(database_url, "SELECT id, status FROM solve_runs") == [(run_id, "finished")]
+    assert query(database_url, "SELECT count(*) FROM candidates") == [(8,)], "--limit 2 tasks of 4 samples"
+    assert query(database_url, "SELECT id FROM tasks ORDER BY id") == [("arc1/aaaa0001",), ("arc1/bbbb0002",)]
+    assert query(database_url, "SELECT DISTINCT votes, correct FROM answers") == [(2, True)]
+
+    text = solver.report(run_id)
+    assert "Overall, 2 attempts | 2 / 2 (100.0%)" in text
+    assert "| passed | 4 |" in text and "| failed | 2 |" in text and "| unparseable | 2 |" in text
+    assert f"| 64 | {NOT_MEASURED} |" in text
+    assert "Price: not measured" in text
+    assert "fake-model" in text
+    assert (solver.root / "results" / run_id / "verdicts.png").exists()
+
+
+def test_a_second_run_pays_for_nothing_and_its_report_says_so(
+    solver: Solver, database_url: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert solver.solve("--samples", "4", "--limit", "1") == 0
+    assert len(solver.model.requests) == 1
+    assert solver.solve("--samples", "4", "--limit", "1") == 0
+    assert len(solver.model.requests) == 1, "the second run must make no model request"
+
+    first, second = run_ids(capsys)
+    assert first != second
+    assert query(database_url, "SELECT count(DISTINCT run_id) FROM candidates") == [(2,)]
+    text = solver.report(second)
+    assert "all 4 completions came from the cache" in text
+    assert f"Cost per task: {NOT_MEASURED}" in text
+    assert "Overall, 2 attempts | 1 / 1 (100.0%)" in text, "cached samples still get judged and voted on"
+
+
+def test_a_corrected_task_file_changes_the_score_of_only_the_runs_that_used_it(
+    solver: Solver, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert solver.solve("--samples", "16", "--limit", "1") == 0
+    corrected = {**GRID_TASK, "test": [{"input": [[5, 6]], "output": [[9, 9]]}]}
+    (solver.root / "arc1" / "training" / "aaaa0001.json").write_text(json.dumps(corrected))
+    assert solver.solve("--samples", "16", "--limit", "1") == 0
+    assert len(solver.model.requests) == 1, "the model never saw a test output, so its samples still stand"
+
+    before, after = run_ids(capsys)
+    # The cached program answers [[6, 5]]: right before the correction, wrong after it.
+    for run_id, expected in ((before, "1 / 1 (100.0%)"), (after, "0 / 1 (0.0%)")):
+        text = solver.report(run_id)
+        assert f"Overall, 2 attempts | {expected} |" in text, "the answers stored at solve time"
+        assert f"| 16 | {expected} |" in text, "the re-vote must score against the same definition"
+
+
+def test_a_half_cached_rerun_does_not_report_half_the_cost_per_task(
+    solver: Solver, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GPU_EUR_PER_HOUR", "2.5")
+    assert solver.solve("--samples", "4", "--limit", "1") == 0
+    fresh_report = solver.report(run_ids(capsys)[0])
+    assert "EUR on wall-clock" in fresh_report and "EUR as the lower bound" in fresh_report
+
+    assert solver.solve("--samples", "4", "--limit", "2") == 0
+    text = solver.report(run_ids(capsys)[0])
+    assert f"Cost per task: {NOT_MEASURED}\n" in text
+    assert "4 of 8 completions came from the cache" in text
+    assert "GPU-hours," in text, "the run's own cost is still there"
+
+
+def test_a_larger_run_requests_only_the_samples_it_lacks(solver: Solver) -> None:
+    assert solver.solve("--samples", "4", "--limit", "1") == 0
+    solver.model.requests.clear()
+    assert solver.solve("--samples", "6", "--limit", "1") == 0
+    assert [request["n"] for request in solver.model.requests] == [2]
+
+
+def test_refine_records_round_two(solver: Solver, database_url: str, capsys: pytest.CaptureFixture[str]) -> None:
+    solver.model.canned = lambda prompt: (
+        completions(GOOD) if "These programs were tried" in prompt else completions(WRONG, CLOSE)
+    )
+    assert solver.solve("--samples", "2", "--limit", "1", "--refine") == 0
+    assert query(database_url, "SELECT round, count(*) FROM candidates GROUP BY round ORDER BY round") == [(1, 2), (2, 1)]
+    assert query(database_url, "SELECT round, correct FROM answers") == [(2, True)]
+    text = solver.report(run_ids(capsys)[0])
+    assert "Overall, 2 attempts | 1 / 1 (100.0%)" in text
+    assert "Round 1, of all tasks | 0 / 1 (0.0%)" in text
+    assert "Round 2, of the tasks it refined | 1 / 1 (100.0%)" in text
+
+
+def test_a_model_outage_fails_the_run_keeps_earlier_tasks_and_the_next_run_resumes(
+    solver: Solver, database_url: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert solver.solve("--samples", "4", "--limit", "1") == 0
+    solver.model.faults.extend([500] * 2)
+    assert solver.solve("--samples", "4", "--limit", "2") == 1, "the first task is cached, the second hits the outage"
+
+    failed = query(database_url, "SELECT id, error FROM solve_runs WHERE status = 'failed'")
+    assert len(failed) == 1 and "gave up" in failed[0][1]
+    assert query(database_url, f"SELECT DISTINCT task_id FROM candidates WHERE run_id = '{failed[0][0]}'") == [
+        ("arc1/aaaa0001",)
+    ], "the task finished before the outage is kept"
+    text = solver.report(failed[0][0])
+    assert "did not finish" in text and "what it logged: 1 tasks" in text
+    assert "failed" in capsys.readouterr().err
+
+    solver.model.requests.clear()
+    assert solver.solve("--samples", "4", "--limit", "2") == 0
+    assert [request["n"] for request in solver.model.requests] == [4], "only the task the outage interrupted"
+
+
+def test_a_vora_failure_is_reported_and_exits_non_zero(
+    solver: Solver, database_url: str, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def down(*args: Any, **kwargs: Any) -> Any:
+        raise VoraError("503 Service Unavailable")
+
+    monkeypatch.setattr(schedule, "run_batch", down)
+    assert solver.solve("--samples", "4", "--limit", "1") == 1
+    assert "Vora failed on 3 candidates" in capsys.readouterr().err
+    assert query(database_url, "SELECT count(*) FROM candidates WHERE verdict IS NULL AND infra_error IS NOT NULL") == [(3,)]
+    [(run_id,)] = query(database_url, "SELECT id FROM solve_runs WHERE status = 'finished'")
+    text = solver.report(run_id)
+    assert "Vora failed on candidates in 1 of 1 tasks, and 1 of those had no program judged at all" in text
+    assert f"| Overall, 2 attempts | 0 / 1 (0.0%) | {NOT_MEASURED} (no scored task is left) |" in text
+
+
+def test_a_bug_in_one_job_destroys_its_siblings_before_the_client_closes(
+    solver: Solver, database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[str] = []
+
+    @contextlib.asynccontextmanager
+    async def connect(profile: Any) -> AsyncIterator[None]:
+        try:
+            yield None
+        finally:
+            events.append("client closed")
+
+    async def run_batch(vora: Any, profile: Any, program: str, *args: Any, **kwargs: Any) -> Any:
+        if program == GOOD:
+            await asyncio.sleep(0.01)
+            raise KeyError("bug")
+        try:
+            await asyncio.sleep(60)
+        finally:
+            await asyncio.sleep(0.01)
+            events.append("sandbox destroyed")
+
+    monkeypatch.setattr(cli, "connect", connect)
+    monkeypatch.setattr(schedule, "run_batch", run_batch)
+    with pytest.raises(KeyError):
+        solver.solve("--samples", "4", "--limit", "1")
+    assert events == ["sandbox destroyed", "client closed"]
+    assert query(database_url, "SELECT status, error FROM solve_runs") == [("failed", "KeyError: 'bug'")]
+
+
+@pytest.mark.usefixtures("ctrl_c_interrupts")
+def test_ctrl_c_closes_the_run_and_keeps_what_finished(
+    solver: Solver, database_url: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    good = completions(GOOD, GOOD, WRONG, JUNK)
+
+    def press_ctrl_c_on_the_second_task(prompt: str) -> list[str]:
+        if len(solver.model.requests) == 2:
+            os.kill(os.getpid(), signal.SIGINT)
+        return good
+
+    solver.model.canned = press_ctrl_c_on_the_second_task
+    with pytest.raises(KeyboardInterrupt):
+        solver.solve("--samples", "4", "--limit", "3")
+
+    [(run_id, status, error, closed)] = query(database_url, "SELECT id, status, error, finished_at IS NOT NULL FROM solve_runs")
+    assert (status, error, closed) == ("interrupted", None, True)
+    assert query(database_url, "SELECT DISTINCT task_id FROM candidates") == [("arc1/aaaa0001",)]
+    assert "interrupted" in capsys.readouterr().err
+    text = solver.report(run_id)
+    assert "- Status: interrupted" in text
+    assert "was interrupted, so it did not finish" in text and "what it logged: 1 tasks" in text
+
+
+@pytest.mark.usefixtures("ctrl_c_interrupts")
+def test_ctrl_c_during_a_database_query_still_closes_the_run(
+    solver: Solver, database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def hang_in_the_database(self: Store, *args: Any) -> None:
+        asyncio.get_running_loop().call_later(0.05, os.kill, os.getpid(), signal.SIGINT)
+        await self._connection.execute(b"SELECT pg_sleep(30)")
+
+    monkeypatch.setattr(Store, "save_task_result", hang_in_the_database)
+    started = time.monotonic()
+    with pytest.raises(KeyboardInterrupt):
+        solver.solve("--samples", "4", "--limit", "1")
+    assert time.monotonic() - started < 20, "the query must be cancelled, not waited for"
+    assert query(database_url, "SELECT status FROM solve_runs") == [("interrupted",)]
+
+
+def test_an_unknown_run_is_an_error(solver: Solver) -> None:
+    with pytest.raises(SystemExit, match="no run nope"):
+        solver.report("nope")
+
+
+@pytest.mark.parametrize("missing", ["VLLM_URL", "VLLM_MODEL", "VORA_ARC_DATABASE_URL"])
+def test_missing_settings_are_named_before_any_work(
+    solver: Solver, monkeypatch: pytest.MonkeyPatch, missing: str
+) -> None:
+    monkeypatch.delenv(missing)
+    with pytest.raises(SystemExit, match=missing):
+        solver.solve("--samples", "4")
+    assert solver.model.requests == []
+
+
+def test_samples_must_be_positive(solver: Solver) -> None:
+    with pytest.raises(SystemExit):
+        solver.solve("--samples", "0")

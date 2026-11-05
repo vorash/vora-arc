@@ -7,13 +7,24 @@ name = "vora-arc"
 version = "0.1.0"
 description = "ARC-AGI solver that runs model-written programs in Vora sandboxes"
 requires-python = ">=3.13"
-dependencies = ["vorash", "httpx>=0.27"]
+dependencies = [
+    "vorash",
+    "httpx>=0.27",
+    "psycopg[binary]>=3.2",
+    "matplotlib>=3.9",
+]
 
 [project.scripts]
 vora-arc = "vora_arc.cli:main"
 
 [dependency-groups]
-dev = ["pytest", "pytest-asyncio", "mypy", "numpy"]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "mypy",
+    "numpy",
+    "pixeltable-pgserver>=0.7.2",
+]
 
 [tool.uv.sources]
 vorash = { git = "ssh://git@github-vorash/vorash/vora.git", subdirectory = "sdk/python", rev = "18b2481769116729d6e7c5cec3adf79249fa3ba0" }

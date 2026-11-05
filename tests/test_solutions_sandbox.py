@@ -12,10 +12,11 @@ from pathlib import Path
 
 import pytest
 
-from vora_arc.cli import find_task, judge
+from vora_arc.cli import find_task
 from vora_arc.client import connect
 from vora_arc.model import Verdict
 from vora_arc.profile import load_profile
+from vora_arc.schedule import judge
 from vora_arc.tasks import load_task
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,5 +37,5 @@ async def test_solution_passes_in_the_sandbox(solution: Path) -> None:
     profile = load_profile()
     task = load_task(find_task(ROOT / "data", "arc1", solution.stem))
     async with connect(profile) as vora:
-        outcome, runs = await judge(vora, profile, task, solution.read_text(), f"{task.id}/m1")
-    assert outcome.verdict is Verdict.PASSED, runs
+        judgement = await judge(vora, profile, task, solution.read_text(), f"{task.id}/m1")
+    assert judgement.outcome.verdict is Verdict.PASSED, judgement.runs
