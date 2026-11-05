@@ -205,6 +205,7 @@ def test_solve_runs_every_kind_of_program_in_real_sandboxes(
         assert len(server.requests) == first_requests, "the second run judges again but must not pay the model again"
 
 
+@pytest.mark.usefixtures("ctrl_c_interrupts")
 def test_ctrl_c_destroys_every_sandbox_it_created(
     data_dir: Path, database_url: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

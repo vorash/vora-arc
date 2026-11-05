@@ -273,6 +273,7 @@ def test_a_bug_in_one_job_destroys_its_siblings_before_the_client_closes(
     assert query(database_url, "SELECT status, error FROM solve_runs") == [("failed", "KeyError: 'bug'")]
 
 
+@pytest.mark.usefixtures("ctrl_c_interrupts")
 def test_ctrl_c_closes_the_run_and_keeps_what_finished(
     solver: Solver, database_url: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -296,6 +297,7 @@ def test_ctrl_c_closes_the_run_and_keeps_what_finished(
     assert "was interrupted, so it did not finish" in text and "what it logged: 1 tasks" in text
 
 
+@pytest.mark.usefixtures("ctrl_c_interrupts")
 def test_ctrl_c_during_a_database_query_still_closes_the_run(
     solver: Solver, database_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:

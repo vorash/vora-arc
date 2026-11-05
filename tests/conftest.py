@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import signal
 import subprocess
 import tempfile
 from collections.abc import Iterator
@@ -31,6 +32,14 @@ def _postgres_bin_dir() -> Path | None:
         return None
     candidate = Path(spec.origin).parent / "pginstall" / "bin"
     return candidate if (candidate / "initdb").exists() else None
+
+
+@pytest.fixture
+def ctrl_c_interrupts() -> Iterator[None]:
+    """A shell starts background jobs with SIGINT ignored, and asyncio then wouldn't see it."""
+    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+    yield
+    signal.signal(signal.SIGINT, previous)
 
 
 @pytest.fixture(scope="session")
