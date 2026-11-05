@@ -367,6 +367,17 @@ async def test_an_unknown_run_is_none(database_url: str) -> None:
         assert await store.load_run("nope") is None
 
 
+async def test_a_run_in_progress_is_open_until_it_is_closed(database_url: str) -> None:
+    async with open_store(database_url) as store:
+        run_id = await store.begin_run(SETTINGS)
+        live = await store.load_run(run_id)
+        await store.interrupt_run(run_id)
+        interrupted = await store.load_run(run_id)
+    assert live is not None and interrupted is not None
+    assert (live.run.status, live.run.finished_at) == ("running", None)
+    assert interrupted.run.status == "interrupted" and interrupted.run.finished_at is not None
+
+
 async def test_a_recorded_error_never_keeps_url_credentials(database_url: str) -> None:
     async with open_store(database_url) as store:
         run_id = await store.begin_run(SETTINGS)

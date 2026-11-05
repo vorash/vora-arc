@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS solve_runs (
     profile text NOT NULL,
     backend text NOT NULL,
     max_concurrency integer NOT NULL,
-    status text NOT NULL CHECK (status IN ('running', 'finished', 'failed')),
+    status text NOT NULL CHECK (status IN ('running', 'finished', 'failed', 'interrupted')),
     error text,
     started_at timestamptz NOT NULL DEFAULT now(),
     finished_at timestamptz
@@ -276,6 +276,11 @@ class Store:
         await self._connection.execute(
             "UPDATE solve_runs SET status = %s, error = %s, finished_at = now() WHERE id = %s",
             ("failed" if error else "finished", storable_text(redact_userinfo(error)) if error else None, run_id),
+        )
+
+    async def interrupt_run(self, run_id: str) -> None:
+        await self._connection.execute(
+            "UPDATE solve_runs SET status = 'interrupted', finished_at = now() WHERE id = %s", (run_id,)
         )
 
     async def save_task_result(self, run_id: str, key: str, result: TaskResult) -> None:

@@ -23,6 +23,12 @@ CANDIDATE_COUNTS = (16, 32, 64, 128)
 INFRA_ERROR = "Vora failed (no verdict)"
 MAX_ERROR_CHARS = 500
 
+_NOT_FINISHED = {
+    "failed": "This run failed, so it did not finish.",
+    "interrupted": "This run was interrupted, so it did not finish.",
+    "running": "This run has not closed. It is still running, or its process was killed before it could record that.",
+}
+
 _MARKDOWN_INLINE = re.compile(r"[\\`*_\[\]~|]")
 
 _SURFACE = "#fcfcfb"
@@ -192,7 +198,7 @@ def render_markdown(data: RunData, gpu_eur_per_hour: float | None, charts: dict[
         f"- Total wall-clock: {_run_wall_clock(data)}",
     ]
     if data.run.status != "finished":
-        lines += ["", f"**This run did not finish. These numbers cover only what it logged: {len(data.tasks)} tasks.**"]
+        lines += ["", f"**{_NOT_FINISHED[data.run.status]} These numbers cover only what it logged: {len(data.tasks)} tasks.**"]
 
     lines += ["", "## Accuracy", "", "| | Solved |", "|---|---|"]
     lines += [f"| {row.label} | {row.value} |" for row in accuracy(data)]

@@ -194,6 +194,18 @@ def test_a_run_that_did_not_finish_says_so() -> None:
     assert f"Total wall-clock: {NOT_MEASURED}" in text
 
 
+def test_an_interrupted_run_and_a_live_run_read_differently() -> None:
+    interrupted = render_markdown(run_data(run=SolveRun("r1", SETTINGS, "interrupted", None, STARTED, STARTED)), None, {})
+    assert "- Status: interrupted\n" in interrupted
+    assert "was interrupted, so it did not finish" in interrupted
+
+    live = render_markdown(run_data(run=SolveRun("r1", SETTINGS, "running", None, STARTED, None)), None, {})
+    assert "- Status: running\n" in live
+    assert "It is still running, or its process was killed" in live
+    assert "was interrupted" not in live
+    assert f"Total wall-clock: {NOT_MEASURED}" in live
+
+
 def test_an_error_page_cannot_break_the_report() -> None:
     page = "<html>\n# Bad Gateway\n\n[click](http://user:secret@gpu/v1) | `code` *x*\n</html>\n" + "x" * 2000
     failed = SolveRun("r1", SETTINGS, "failed", f"ModelError: {page}", STARTED, None)

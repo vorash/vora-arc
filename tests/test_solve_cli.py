@@ -7,6 +7,9 @@ import asyncio
 import base64
 import json
 import logging
+import os
+import signal
+import time
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any
@@ -19,6 +22,7 @@ from vora import VoraError
 
 from vora_arc import cli, generate, schedule
 from vora_arc.report import NOT_MEASURED
+from vora_arc.store import Store
 
 GRID_TASK = {
     "train": [{"input": [[1, 2]], "output": [[2, 1]]}, {"input": [[3, 4]], "output": [[4, 3]]}],
@@ -248,6 +252,44 @@ def test_a_bug_in_one_job_destroys_its_siblings_before_the_client_closes(
         solver.solve("--samples", "4", "--limit", "1")
     assert events == ["sandbox destroyed", "client closed"]
     assert query(database_url, "SELECT status, error FROM solve_runs") == [("failed", "KeyError: 'bug'")]
+
+
+def test_ctrl_c_closes_the_run_and_keeps_what_finished(
+    solver: Solver, database_url: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    good = completions(GOOD, GOOD, WRONG, JUNK)
+
+    def press_ctrl_c_on_the_second_task(prompt: str) -> list[str]:
+        if len(solver.model.requests) == 2:
+            os.kill(os.getpid(), signal.SIGINT)
+        return good
+
+    solver.model.canned = press_ctrl_c_on_the_second_task
+    with pytest.raises(KeyboardInterrupt):
+        solver.solve("--samples", "4", "--limit", "3")
+
+    [(run_id, status, error, closed)] = query(database_url, "SELECT id, status, error, finished_at IS NOT NULL FROM solve_runs")
+    assert (status, error, closed) == ("interrupted", None, True)
+    assert query(database_url, "SELECT DISTINCT task_id FROM candidates") == [("arc1/aaaa0001",)]
+    assert "interrupted" in capsys.readouterr().err
+    text = solver.report(run_id)
+    assert "- Status: interrupted" in text
+    assert "was interrupted, so it did not finish" in text and "what it logged: 1 tasks" in text
+
+
+def test_ctrl_c_during_a_database_query_still_closes_the_run(
+    solver: Solver, database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def hang_in_the_database(self: Store, *args: Any) -> None:
+        asyncio.get_running_loop().call_later(0.05, os.kill, os.getpid(), signal.SIGINT)
+        await self._connection.execute(b"SELECT pg_sleep(30)")
+
+    monkeypatch.setattr(Store, "save_task_result", hang_in_the_database)
+    started = time.monotonic()
+    with pytest.raises(KeyboardInterrupt):
+        solver.solve("--samples", "4", "--limit", "1")
+    assert time.monotonic() - started < 20, "the query must be cancelled, not waited for"
+    assert query(database_url, "SELECT status FROM solve_runs") == [("interrupted",)]
 
 
 def test_an_unknown_run_is_an_error(solver: Solver) -> None:

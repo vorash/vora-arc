@@ -90,9 +90,9 @@ async def solve(args: argparse.Namespace) -> int:
         httpx.AsyncClient(timeout=REQUEST_TIMEOUT_S) as http,
     ):
         run_id = await store.begin_run(settings)
-        print(f"run {run_id}: {len(tasks)} tasks, {args.samples} samples each, model {model.model}", flush=True)
         solved = infra_errors = 0
         try:
+            print(f"run {run_id}: {len(tasks)} tasks, {args.samples} samples each, model {model.model}", flush=True)
             for task in tasks:
                 key = task_key(args.dataset, task)
                 await store.register_task(key, args.dataset, args.split)
@@ -107,13 +107,18 @@ async def solve(args: argparse.Namespace) -> int:
                 solved += result.solved
                 infra_errors += result.infra_errors
                 print(f"{task.id}: {'solved' if result.solved else 'unsolved'}, {len(result.candidates)} candidates", flush=True)
+            await store.finish_run(run_id)
         except Exception as error:
             await store.finish_run(run_id, f"{type(error).__name__}: {error}")
             if not isinstance(error, ModelError):
                 raise
             print(f"run {run_id} failed: {error}", file=sys.stderr)
             return 1
-        await store.finish_run(run_id)
+        except BaseException:
+            # asyncio.run turns Ctrl-C into a CancelledError here, and raises KeyboardInterrupt after.
+            await store.interrupt_run(run_id)
+            print(f"run {run_id} interrupted", file=sys.stderr)
+            raise
     print(f"run {run_id}: solved {solved} of {len(tasks)}; report with: vora-arc report --run {run_id}")
     if infra_errors:
         print(f"run {run_id}: Vora failed on {infra_errors} candidates, so they have no verdict", file=sys.stderr)
