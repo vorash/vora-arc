@@ -22,8 +22,8 @@ class DictCache:
     async def load_completions(self, task_id: str, prompt_hash: str) -> dict[int, str]:
         return {i: text for (t, p, i), text in self.rows.items() if (t, p) == (task_id, prompt_hash)}
 
-    async def save_completions(self, task_id: str, prompt_hash: str, model: str, texts: Mapping[int, str]) -> None:
-        self.rows.update({(task_id, prompt_hash, i): text for i, text in texts.items()})
+    async def save_completions(self, task_id: str, prompt_hash: str, model: str, texts: Mapping[int, str]) -> dict[int, str]:
+        return {i: self.rows.setdefault((task_id, prompt_hash, i), text) for i, text in texts.items()}
 
 
 class FakeModel:

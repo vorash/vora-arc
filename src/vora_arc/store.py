@@ -225,13 +225,18 @@ class Store:
         )
         return {index: text for index, text in await cursor.fetchall()}
 
-    async def save_completions(self, task_id: str, prompt_hash: str, model: str, texts: Mapping[int, str]) -> None:
+    async def save_completions(self, task_id: str, prompt_hash: str, model: str, texts: Mapping[int, str]) -> dict[int, str]:
         async with self._connection.cursor() as cursor:
             await cursor.executemany(
                 "INSERT INTO completions (task_id, prompt_hash, sample_index, model, text) VALUES (%s, %s, %s, %s, %s) "
                 "ON CONFLICT DO NOTHING",
                 [(task_id, prompt_hash, index, model, text) for index, text in texts.items()],
             )
+            await cursor.execute(
+                "SELECT sample_index, text FROM completions WHERE task_id = %s AND prompt_hash = %s AND sample_index = ANY(%s)",
+                (task_id, prompt_hash, list(texts)),
+            )
+            return {index: text for index, text in await cursor.fetchall()}
 
     async def save_task_definition(self, key: str, dataset: str, split: str, task: Task) -> None:
         await self._connection.execute(

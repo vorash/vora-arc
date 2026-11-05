@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from dataclasses import replace
 from functools import partial
 from typing import Any
@@ -23,7 +25,7 @@ from canned_runs import (
 from fake_model import FakeModel
 
 from vora_arc import model
-from vora_arc.generate import ModelConfig, sample
+from vora_arc.generate import ModelConfig, extract_program, sample
 from vora_arc.model import Pair, Task, Verdict
 from vora_arc.pipeline import CandidateResult, TaskResult, solve_task
 from vora_arc.schedule import schedule
@@ -102,9 +104,54 @@ async def test_the_cache_separates_tasks_prompts_and_samples(database_url: str) 
 async def test_saving_a_completion_twice_keeps_the_first(database_url: str) -> None:
     async with open_store(database_url) as store:
         await store.save_task_definition(KEY, "arc1", "training", TASK)
-        await store.save_completions(KEY, "h", "m", {0: "first"})
-        await store.save_completions(KEY, "h", "m", {0: "second"})
-        assert await store.load_completions(KEY, "h") == {0: "first"}
+        assert await store.save_completions(KEY, "h", "m", {0: "first"}) == {0: "first"}
+        assert await store.save_completions(KEY, "h", "m", {0: "second", 1: "new"}) == {0: "first", 1: "new"}
+        assert await store.load_completions(KEY, "h") == {0: "first", 1: "new"}
+
+
+async def test_two_runs_racing_for_a_sample_judge_the_one_text_that_is_stored(
+    database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    CannedRuns(monkeypatch)
+    both_missed_the_cache = threading.Barrier(2, timeout=5)
+
+    def canned(prompt: str) -> list[str]:
+        both_missed_the_cache.wait()
+        return completions(GOOD, WRONG)
+
+    server = FakeModel(canned)
+
+    async def solve_on(store: Store, http: httpx.AsyncClient) -> TaskResult:
+        async def scheduler(task: Task, programs: Any) -> Any:
+            return await schedule(None, None, task, programs, max_concurrency=4)  # type: ignore[arg-type]
+
+        return await solve_task(
+            TASK,
+            sampler=partial(sample, http, ModelConfig(url=server.url, model="m"), store, KEY),
+            scheduler=scheduler,
+            samples=1,
+            refine=False,
+        )
+
+    with server.running():
+        async with open_store(database_url) as one, open_store(database_url) as other, httpx.AsyncClient(timeout=5.0) as http:
+            await one.save_task_definition(KEY, "arc1", "training", TASK)
+            first, second = await asyncio.gather(solve_on(one, http), solve_on(other, http))
+            for store, result in ((one, first), (other, second)):
+                await store.save_task_result(await store.begin_run(SETTINGS), KEY, result)
+
+    assert len(server.requests) == 2, "the race must really have happened: each run asked and got its own text"
+    linked = rows(
+        database_url,
+        "SELECT c.program, co.text FROM candidates c "
+        "JOIN completions co USING (task_id, prompt_hash, sample_index)",
+    )
+    assert len(linked) == 2
+    assert all(program == extract_program(text) for program, text in linked), "a candidate must be the completion it points at"
+    assert first.candidates[0].verdict is second.candidates[0].verdict
+    assert first.answers == second.answers
+    timings = first.timings[0], second.timings[0]
+    assert [t.fresh_completions for t in timings] == [1, 1], "the loser paid for its request even though its text was dropped"
 
 
 async def test_arc1_and_arc2_can_hold_the_same_id_with_different_grids(database_url: str) -> None:

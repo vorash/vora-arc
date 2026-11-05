@@ -73,7 +73,11 @@ def _split_credentials(raw: str) -> tuple[str, tuple[str, str] | None]:
 class CompletionCache(Protocol):
     async def load_completions(self, task_id: str, prompt_hash: str) -> Mapping[int, str]: ...
 
-    async def save_completions(self, task_id: str, prompt_hash: str, model: str, texts: Mapping[int, str]) -> None: ...
+    async def save_completions(
+        self, task_id: str, prompt_hash: str, model: str, texts: Mapping[int, str]
+    ) -> Mapping[int, str]:
+        """Store these samples and return what is stored, which is the first text saved for each."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -151,9 +155,9 @@ async def sample(
     while missing := [index for index in range(n) if index not in held]:
         texts, elapsed_ms = await _request(http, config, prompt, min(len(missing), MAX_SAMPLES_PER_REQUEST))
         request_ms = (request_ms or 0) + elapsed_ms
-        fresh = dict(zip(missing, texts))
-        await cache.save_completions(task_id, key, config.model, fresh)
-        held.update(fresh)
+        # A run racing this one may have saved these samples first. Candidates point at the
+        # stored row, so judging this response's text instead would judge a different program.
+        held.update(await cache.save_completions(task_id, key, config.model, dict(zip(missing, texts))))
     return Sampled(key, tuple(held[index] for index in range(n)), n - cached, cached, request_ms)
 
 
