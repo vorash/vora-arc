@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import asyncio
 import base64
 import json
 import logging
@@ -200,6 +201,36 @@ def test_a_vora_failure_is_reported_and_exits_non_zero(
     assert solver.solve("--samples", "4", "--limit", "1") == 1
     assert "Vora failed on 3 candidates" in capsys.readouterr().err
     assert query(database_url, "SELECT count(*) FROM candidates WHERE verdict IS NULL AND infra_error IS NOT NULL") == [(3,)]
+
+
+def test_a_bug_in_one_job_destroys_its_siblings_before_the_client_closes(
+    solver: Solver, database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[str] = []
+
+    @contextlib.asynccontextmanager
+    async def connect(profile: Any) -> AsyncIterator[None]:
+        try:
+            yield None
+        finally:
+            events.append("client closed")
+
+    async def run_batch(vora: Any, profile: Any, program: str, *args: Any, **kwargs: Any) -> Any:
+        if program == GOOD:
+            await asyncio.sleep(0.01)
+            raise KeyError("bug")
+        try:
+            await asyncio.sleep(60)
+        finally:
+            await asyncio.sleep(0.01)
+            events.append("sandbox destroyed")
+
+    monkeypatch.setattr(cli, "connect", connect)
+    monkeypatch.setattr(schedule, "run_batch", run_batch)
+    with pytest.raises(KeyError):
+        solver.solve("--samples", "4", "--limit", "1")
+    assert events == ["sandbox destroyed", "client closed"]
+    assert query(database_url, "SELECT status, error FROM solve_runs") == [("failed", "KeyError: 'bug'")]
 
 
 def test_an_unknown_run_is_an_error(solver: Solver) -> None:

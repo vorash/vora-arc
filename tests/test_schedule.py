@@ -133,6 +133,41 @@ async def test_a_bug_in_this_package_is_not_swallowed_as_a_vora_failure(runs: Fa
         await run(["a"])
 
 
+async def test_a_bug_in_one_job_cancels_its_siblings_and_waits_for_their_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
+    started: list[str] = []
+    destroyed: list[str] = []
+    all_running = asyncio.Event()
+
+    async def run_batch(vora: Any, profile: Any, program: str, task: Task, *, correlation_id: str) -> BatchResult:
+        started.append(program)
+        if len(started) == 3:
+            all_running.set()
+        if program == "bug":
+            await all_running.wait()
+            raise KeyError("bug")
+        try:
+            await asyncio.sleep(60)
+        finally:
+            await asyncio.sleep(0.01)  # destroying a sandbox takes a request, even after a cancel
+            destroyed.append(program)
+        return batch()
+
+    monkeypatch.setattr(schedule, "run_batch", run_batch)
+    with pytest.raises(KeyError):
+        await run(["sibling-1", "sibling-2", "bug", "queued"], cap=3)
+    assert {"sibling-1", "sibling-2"} <= set(started)
+    assert sorted(destroyed) == sorted(set(started) - {"bug"}), "a sandbox must not outlive the error, or the client closed next"
+    assert asyncio.all_tasks() == {asyncio.current_task()}, "no job may keep running"
+
+
+async def test_every_bug_stays_visible_when_several_jobs_fail(runs: FakeRuns) -> None:
+    runs.results = {"a": [KeyError("first")], "b": [ValueError("second")]}
+    with pytest.raises((KeyError, ValueError)) as raised:
+        await run(["a", "b"])
+    assert isinstance(raised.value.__cause__, ExceptionGroup), "the group holds what the first exception doesn't say"
+    assert {type(e) for e in raised.value.__cause__.exceptions} == {KeyError, ValueError}
+
+
 def test_the_cap_comes_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("VORA_MAX_CONCURRENCY", raising=False)
     assert max_concurrency_from_env() == schedule.DEFAULT_MAX_CONCURRENCY

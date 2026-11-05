@@ -85,6 +85,8 @@ async def schedule(
     """Judge each distinct program once, at most `max_concurrency` at a time, keyed by SHA-256.
 
     One program's Vora failure is reported in its result and doesn't stop the others.
+    Any other exception is a bug: it cancels the other jobs, and their sandboxes are
+    destroyed before it reaches the caller, who may close the client next.
     """
     gate = asyncio.Semaphore(max_concurrency)
 
@@ -101,8 +103,12 @@ async def schedule(
         return ProgramResult(program, sha256, queue_ms, result)
 
     unique = {program_sha256(program): program for program in programs}
-    results = await asyncio.gather(*(job(sha256, program) for sha256, program in unique.items()))
-    return {result.sha256: result for result in results}
+    try:
+        async with asyncio.TaskGroup() as group:
+            jobs = [group.create_task(job(sha256, program)) for sha256, program in unique.items()]
+    except ExceptionGroup as failures:
+        raise failures.exceptions[0] from failures
+    return {result.sha256: result for result in (done.result() for done in jobs)}
 
 
 def _since_ms(started: float) -> float:
