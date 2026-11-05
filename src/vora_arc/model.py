@@ -74,3 +74,8 @@ class Verdict(StrEnum):
     MEMORIZED = "memorized"
     NONDETERMINISTIC = "nondeterministic"
     PASSED = "passed"
+
+
+def storable_text(text: str) -> str:
+    """Make untrusted text safe for PostgreSQL, which rejects NUL and lone surrogates."""
+    return text.replace("\x00", "�").encode("utf-8", "replace").decode("utf-8")
