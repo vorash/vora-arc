@@ -24,30 +24,30 @@ VORA_ARC_PROFILE=profiles/python-arc-bwrap.toml … uv run pytest -m sandbox
 Timings were measured from the laptop through an SSH tunnel to the API, so they
 include one round trip each.
 
-### Update: Vora v0.10.3 (2026-11-04)
+### Update: Vora v0.10.4 (2026-11-05)
 
-The sandbox suite was re-run on v0.10.3, and the hostile suite now gives gVisor
-12 pass, 3 expected failures, and bwrap 11 pass, 4 expected failures. The
-hand-written solutions pass 10 / 10 on both. The bwrap gain is the 2 GB
-allocation's peak memory (vorash/vora#108): since v0.10.3 a bwrap sandbox
-survives an OOM in an exec and keeps its stats.
+The sandbox suite was re-run on v0.10.4. The hostile suite gives gVisor 12 pass, 3
+expected failures, and bwrap 11 pass, 4 expected failures. The hand-written
+solutions pass 10 / 10 on both. The bwrap gain is the 2 GB allocation's peak memory
+(vorash/vora#108): since v0.10.3 a bwrap sandbox survives an OOM in an exec and keeps
+its stats.
 
-The 10x create gap above was not bwrap or systemd. gRPC's reconnect backoff made
-the runner wait about 1 s before retrying the agent's socket (vorash/vora#114,
-fixed in v0.10.2). Measured on vora-mini through the CLI, a different method from
-the table above, v0.10.2 creates a bwrap sandbox in 183-187 ms and a gVisor sandbox
-in 108-125 ms. The bwrap runner exec is also cheaper since v0.10.3: a `/bin/true`
-exec through the CLI went from a median 19.8 ms to 10.3 ms.
+**Skip v0.10.3 on bwrap.** Its OOM shim needs OS threads that count against `pids`,
+so at this profile's `pids = 16` 8 of 40 runs of the solution suite failed. On v0.10.4,
+40 of 40 passed. A long-lived sandbox is still at risk at this limit: after about 50
+execs in one sandbox on a 16-core host, `vora-init`'s threads use up the limit
+(vorash/vora#125). This harness runs one exec per sandbox, so it isn't affected yet,
+but warm pools would be.
 
-v0.10.3 did not change gVisor. A gVisor sandbox that goes over its memory limit
-still dies, and later execs report `EXITED` with exit code 128 (vorash/vora#120).
+The 10x create gap above was not bwrap or systemd. gRPC's reconnect backoff made the
+runner wait about 1 s before retrying the agent's socket (vorash/vora#114, fixed in
+v0.10.2). Measured on vora-mini through the CLI, a different method from the table
+above, v0.10.2 creates a bwrap sandbox in 183-187 ms and a gVisor sandbox in 108-125 ms.
+A `/bin/true` exec on bwrap through the CLI went from a median 19.8 ms on v0.10.2 to
+7.9 ms on v0.10.4.
 
-**pids under gVisor.** The spec's 16-process limit can't start a gVisor
-sandbox. The host cgroup also counts runsc's own threads: 30 or fewer fail to
-start, 32 is flaky, and 40 or more always works. `python-arc.toml` uses 64.
-Because guest processes aren't host processes, the fork bomb runs into the
-256 MB memory cap (`KILLED_OOM`) instead of the process limit. Either way the
-run is killed, and the host is not affected.
+A gVisor sandbox that goes over its memory limit still dies, and later execs report
+`EXITED` with exit code 128 (vorash/vora#120).
 
 ## Expected failures
 
