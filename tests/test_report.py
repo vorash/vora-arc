@@ -144,6 +144,50 @@ def test_verdict_counts_include_duplicates_and_name_vora_failures() -> None:
     assert counts[Verdict.TIMEOUT.value] == 0
 
 
+def test_a_task_vora_failed_on_is_shown_with_and_without_it() -> None:
+    data = run_data(
+        candidates=(candidate("arc1/a", 0), candidate("arc1/b", 0, None)),
+        answers=(AnswerRow("arc1/a", 1, 1, 1, True),),
+    )
+    assert [row.value for row in accuracy(data)][:2] == ["1 / 2 (50.0%)", "1 / 2 (50.0%)"]
+    assert [row.value for row in accuracy(data, leave_out={"arc1/b"})][:2] == ["1 / 1 (100.0%)", "1 / 1 (100.0%)"]
+    text = render_markdown(data, None, {})
+    assert "Vora failed on candidates in 1 of 2 tasks, and 1 of those had no program judged at all" in text
+    assert "can't be judged" in text
+    assert "| Solved, counting those tasks | Solved, leaving those tasks out |" in text
+    assert "| Overall, 2 attempts | 1 / 2 (50.0%) | 1 / 1 (100.0%) |" in text
+
+
+def test_an_outage_on_every_task_is_not_reported_as_a_score_of_zero_alone() -> None:
+    data = run_data(candidates=(candidate("arc1/a", 0, None), candidate("arc1/b", 0, None)), answers=())
+    text = render_markdown(data, None, {})
+    assert "Vora failed on candidates in 2 of 2 tasks, and 2 of those had no program judged at all" in text
+    assert f"| Overall, 2 attempts | 0 / 2 (0.0%) | {NOT_MEASURED} (no scored task is left) |" in text
+    assert "Tasks Vora failed on are included here" in text, "the re-vote table counts them too"
+
+
+def test_leaving_a_task_out_takes_it_out_of_both_sides_of_the_fraction() -> None:
+    data = run_data(
+        candidates=(candidate("arc1/a", 0), candidate("arc1/a", 1, None), candidate("arc1/b", 0, Verdict.FAILED)),
+        answers=(AnswerRow("arc1/a", 1, 1, 1, True), AnswerRow("arc1/b", 1, 1, 1, False)),
+    )
+    text = render_markdown(data, None, {})
+    assert "and 0 of those had no program judged at all" in text, "task a still had one program judged"
+    assert "| Overall, 2 attempts | 1 / 2 (50.0%) | 0 / 1 (0.0%) |" in text, "a solved task can't stay on top of a smaller total"
+
+
+def test_a_candidate_with_no_program_does_not_count_as_a_judged_program() -> None:
+    unparseable = replace(candidate("arc1/a", 1, Verdict.UNPARSEABLE), program=None)
+    data = run_data(candidates=(candidate("arc1/a", 0, None), unparseable))
+    assert "and 1 of those had no program judged at all" in render_markdown(data, None, {})
+
+
+def test_a_run_without_vora_failures_has_no_such_column() -> None:
+    text = render_markdown(run_data(), None, {})
+    assert "| Overall, 2 attempts | 2 / 2 (100.0%) |" in text
+    assert "Vora failed" not in text and "leaving those tasks out" not in text
+
+
 def test_time_split_sums_what_was_logged() -> None:
     split = {p.name: p.seconds for p in time_split(run_data())}
     assert split["generation"] == pytest.approx(2.5)

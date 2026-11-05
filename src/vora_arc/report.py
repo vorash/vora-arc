@@ -7,7 +7,7 @@ import html
 import os
 import re
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -87,15 +87,21 @@ def gpu_price_from_env() -> float | None:
     return price
 
 
-def accuracy(data: RunData) -> list[Accuracy]:
+def tasks_vora_failed_on(data: RunData) -> set[str]:
+    """Tasks with a candidate that has no verdict. Their votes went ahead without it."""
+    return {c.task_id for c in data.candidates if c.infra_error is not None}
+
+
+def accuracy(data: RunData, leave_out: Collection[str] = ()) -> list[Accuracy]:
     """Overall, then per round. Tasks without public test outputs can't be scored."""
-    scored = {key for key, task in data.tasks.items() if all(case.output is not None for case in task.test)}
+    scored = {key for key, task in data.tasks.items() if all(case.output is not None for case in task.test)} - set(leave_out)
+    none_left = "no scored task is left" if leave_out else "no scored tasks"
     right = {(a.task_id, a.round) for a in data.answers if a.correct and a.task_id in scored}
     refined = {p.task_id for p in data.phases if p.round == 2} & scored
     round_two = "" if data.run.settings.refine else "run without --refine"
     return [
-        Accuracy("Overall, 2 attempts", len({task for task, _ in right}), len(scored), "no scored tasks"),
-        Accuracy("Round 1, of all tasks", sum(r == 1 for _, r in right), len(scored), "no scored tasks"),
+        Accuracy("Overall, 2 attempts", len({task for task, _ in right}), len(scored), none_left),
+        Accuracy("Round 1, of all tasks", sum(r == 1 for _, r in right), len(scored), none_left),
         Accuracy(
             "Round 2, of the tasks it refined",
             sum(r == 2 for _, r in right),
@@ -200,8 +206,8 @@ def render_markdown(data: RunData, gpu_eur_per_hour: float | None, charts: dict[
     if data.run.status != "finished":
         lines += ["", f"**{_NOT_FINISHED[data.run.status]} These numbers cover only what it logged: {len(data.tasks)} tasks.**"]
 
-    lines += ["", "## Accuracy", "", "| | Solved |", "|---|---|"]
-    lines += [f"| {row.label} | {row.value} |" for row in accuracy(data)]
+    lines += ["", "## Accuracy", ""]
+    lines += _accuracy_table(data)
     lines += _multi_test_note(data)
 
     lines += ["", "## Accuracy vs candidate count", ""]
@@ -215,6 +221,8 @@ def render_markdown(data: RunData, gpu_eur_per_hour: float | None, charts: dict[
     for point in accuracy_by_count(data):
         value = NOT_MEASURED if point.solved is None else f"{point.solved} / {point.total} ({point.solved / point.total:.1%})"
         lines.append(f"| {point.count} | {value} |")
+    if tasks_vora_failed_on(data):
+        lines += ["", "Tasks Vora failed on are included here, voted on the candidates that did get a verdict."]
     lines += _chart(charts, "accuracy")
 
     lines += ["", "## Verdicts", ""]
@@ -294,6 +302,26 @@ def _run_wall_clock(data: RunData) -> str:
     if data.run.finished_at is None:
         return NOT_MEASURED
     return _seconds((data.run.finished_at - data.run.started_at).total_seconds())
+
+
+def _accuracy_table(data: RunData) -> list[str]:
+    affected = tasks_vora_failed_on(data)
+    if not affected:
+        return ["| | Solved |", "|---|---|", *(f"| {row.label} | {row.value} |" for row in accuracy(data))]
+    judged = {c.task_id for c in data.candidates if c.verdict is not None and c.program is not None}
+    return [
+        f"Vora failed on candidates in {len(affected)} of {len(data.tasks)} tasks, and {len(affected - judged)} of those "
+        "had no program judged at all. These tasks can't be judged: a Vora failure says nothing about the program, "
+        "and their votes went ahead without the candidates it hit. Both columns below are measured, and neither "
+        "is the score the model would have got without the failures.",
+        "",
+        "| | Solved, counting those tasks | Solved, leaving those tasks out |",
+        "|---|---|---|",
+        *(
+            f"| {counted.label} | {counted.value} | {without.value} |"
+            for counted, without in zip(accuracy(data), accuracy(data, leave_out=affected))
+        ),
+    ]
 
 
 def _multi_test_note(data: RunData) -> list[str]:

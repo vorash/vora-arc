@@ -222,6 +222,10 @@ def test_a_vora_failure_is_reported_and_exits_non_zero(
     assert solver.solve("--samples", "4", "--limit", "1") == 1
     assert "Vora failed on 3 candidates" in capsys.readouterr().err
     assert query(database_url, "SELECT count(*) FROM candidates WHERE verdict IS NULL AND infra_error IS NOT NULL") == [(3,)]
+    [(run_id,)] = query(database_url, "SELECT id FROM solve_runs WHERE status = 'finished'")
+    text = solver.report(run_id)
+    assert "Vora failed on candidates in 1 of 1 tasks, and 1 of those had no program judged at all" in text
+    assert f"| Overall, 2 attempts | 0 / 1 (0.0%) | {NOT_MEASURED} (no scored task is left) |" in text
 
 
 def test_a_bug_in_one_job_destroys_its_siblings_before_the_client_closes(
