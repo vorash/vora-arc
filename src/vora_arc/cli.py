@@ -3,15 +3,15 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
-from vora import Vora
-
-from .client import connect, run_batch
-from .model import BatchResult, Task, Verdict
-from .profile import Profile, load_profile
+from .client import connect
+from .model import BatchResult, Verdict
+from .profile import load_profile
+from .schedule import judge
 from .tasks import load_task
-from .verify import Failed, Outcome, check_determinism, verify
+from .verify import Failed, Outcome
 
 DEFAULT_DATA_DIR = Path("data")
 
@@ -25,16 +25,7 @@ def find_task(data_dir: Path, dataset: str, task_id: str) -> Path:
     return matches[0]
 
 
-async def judge(vora: Vora, profile: Profile, task: Task, program: str, correlation_id: str) -> tuple[Outcome, list[BatchResult]]:
-    first = await run_batch(vora, profile, program, task, correlation_id=correlation_id)
-    outcome = verify(task, program, first)
-    if outcome.verdict is not Verdict.PASSED:
-        return outcome, [first]
-    second = await run_batch(vora, profile, program, task, correlation_id=f"{correlation_id}/rerun")
-    return check_determinism(first, second), [first, second]
-
-
-def report(outcome: Outcome, runs: list[BatchResult]) -> str:
+def report(outcome: Outcome, runs: Sequence[BatchResult]) -> str:
     lines = [f"verdict: {outcome.verdict}"]
     if isinstance(outcome, Failed):
         lines.append(f"cell accuracy: {outcome.cell_accuracy:.3f}")
@@ -55,9 +46,9 @@ async def run_solution(args: argparse.Namespace) -> int:
     program = args.program.read_text()
     profile = load_profile(args.profile)
     async with connect(profile) as vora:
-        outcome, runs = await judge(vora, profile, task, program, f"{task.id}/{args.program.stem}")
-    print(report(outcome, runs))
-    return 0 if outcome.verdict is Verdict.PASSED else 1
+        judgement = await judge(vora, profile, task, program, f"{task.id}/{args.program.stem}")
+    print(report(judgement.outcome, judgement.runs))
+    return 0 if judgement.outcome.verdict is Verdict.PASSED else 1
 
 
 def main(argv: list[str] | None = None) -> int:

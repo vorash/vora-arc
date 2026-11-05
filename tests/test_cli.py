@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from vora_arc import cli
+from vora_arc import cli, schedule
 from vora_arc.model import BatchResult, Grid, GridResult, GridStatus, RunStatus
 
 TASK_JSON = {
@@ -55,7 +55,7 @@ def sandbox_returns(monkeypatch: pytest.MonkeyPatch, *results: BatchResult) -> l
         calls.append(correlation_id)
         return queue.pop(0)
 
-    monkeypatch.setattr(cli, "run_batch", fake_run_batch)
+    monkeypatch.setattr(schedule, "run_batch", fake_run_batch)
     return calls
 
 
