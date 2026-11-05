@@ -66,9 +66,7 @@ async def test_allocating_2gb_is_killed_at_the_memory_cap(vora: Vora) -> None:
     result = await run(vora, "allocate_2gb")
 
     assert result.run_status is RunStatus.KILLED_OOM
-    if result.peak_mem_bytes is None:
-        # The kill itself proves the cap held (oomKills comes from the cgroup).
-        pytest.xfail("Vora reports no memory stats for a sandbox after an OOM kill")
+    assert result.peak_mem_bytes is not None
     assert result.peak_mem_bytes <= PROFILE.memory_bytes
 
 
