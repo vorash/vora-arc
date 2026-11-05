@@ -68,10 +68,20 @@ class PhaseTime:
 
 
 @dataclass(frozen=True)
-class Cost:
-    gpu_hours: float | None
+class GpuCost:
+    hours: float | None
+    eur: float | None
     eur_per_task: float | None
-    note: str
+
+
+@dataclass(frozen=True)
+class Cost:
+    wall_clock: GpuCost
+    """What a rented GPU costs for this run: a rental bills whether or not a request is open."""
+    request_time: GpuCost
+    """The lower bound: only the time this run had a model request open."""
+    notes: tuple[str, ...]
+    """Why a figure is not measured, or what it leaves out."""
 
 
 def gpu_price_from_env() -> float | None:
@@ -178,17 +188,31 @@ def time_split(data: RunData) -> list[PhaseTime]:
 
 
 def cost(data: RunData, gpu_eur_per_hour: float | None) -> Cost:
-    """GPU-hours are the time this run had a model request open; an idle GPU isn't counted."""
     fresh = sum(p.fresh_completions for p in data.phases)
     cached = sum(p.cached_completions for p in data.phases)
     generation = _sum_ms(p.generation_ms for p in data.phases)
-    if generation is None:
-        return Cost(None, None, f"no generation was logged in this run ({cached} completions came from the cache)")
-    hours = generation / 3600
-    note = f"covers {fresh} of {fresh + cached} completions; the rest were paid for by an earlier run" if cached else ""
+    request_hours = None if generation is None else generation / 3600
+    wall_clock_hours: float | None = None
+    notes: list[str] = []
+    if data.run.status != "finished" or data.run.finished_at is None:
+        notes.append("a run that did not finish has no wall-clock cost")
+    elif request_hours is None:
+        notes.append("no model request was logged, so this run has no GPU time to bill")
+    else:
+        wall_clock_hours = (data.run.finished_at - data.run.started_at).total_seconds() / 3600
+    if cached:
+        notes.append(f"{cached} of {fresh + cached} completions came from the cache and were paid for by an earlier run")
+        notes.append("cost per task is not measured: dividing by every task would understate what a task costs")
     if gpu_eur_per_hour is None:
-        return Cost(hours, None, "GPU_EUR_PER_HOUR is not set")
-    return Cost(hours, hours * gpu_eur_per_hour / len(data.tasks), note)
+        notes.append("GPU_EUR_PER_HOUR is not set")
+
+    def priced(hours: float | None) -> GpuCost:
+        if hours is None or gpu_eur_per_hour is None:
+            return GpuCost(hours, None, None)
+        eur = hours * gpu_eur_per_hour
+        return GpuCost(hours, eur, None if cached or not data.tasks else eur / len(data.tasks))
+
+    return Cost(priced(wall_clock_hours), priced(request_hours), tuple(notes))
 
 
 def render_markdown(data: RunData, gpu_eur_per_hour: float | None, charts: dict[str, str]) -> str:
@@ -248,16 +272,16 @@ def render_markdown(data: RunData, gpu_eur_per_hour: float | None, charts: dict[
     lines += ["", "Sums over jobs overlap when jobs run at once, so they don't add up to the wall-clock."]
 
     run_cost = cost(data, gpu_eur_per_hour)
-    gpu_hours = NOT_MEASURED if run_cost.gpu_hours is None else f"{run_cost.gpu_hours:.6f}"
-    per_task = NOT_MEASURED if run_cost.eur_per_task is None else f"{run_cost.eur_per_task:.6f} EUR"
     lines += [
         "",
-        "## Cost per task",
+        "## Cost",
         "",
-        f"- GPU-hours (time with a model request open): {gpu_hours}",
+        f"- Wall-clock, what a rented GPU costs for this run: {_run_cost(run_cost.wall_clock)}",
+        f"- Time with a model request open, the lower bound: {_run_cost(run_cost.request_time)}",
+        f"- Cost per task: {_per_task_cost(run_cost)}",
         f"- Price: {NOT_MEASURED if gpu_eur_per_hour is None else f'{gpu_eur_per_hour} EUR per hour'}",
-        f"- Cost per task: {per_task}" + (f" ({run_cost.note})" if run_cost.note else ""),
     ]
+    lines += [f"- Note: {note}" for note in run_cost.notes]
     return "\n".join(lines) + "\n"
 
 
@@ -271,6 +295,23 @@ def write_report(data: RunData, directory: Path, gpu_eur_per_hour: float | None)
     path = directory / "report.md"
     path.write_text(render_markdown(data, gpu_eur_per_hour, charts))
     return path
+
+
+def _run_cost(basis: GpuCost) -> str:
+    if basis.hours is None:
+        return NOT_MEASURED
+    eur = NOT_MEASURED if basis.eur is None else f"{basis.eur:.6f} EUR"
+    return f"{basis.hours:.6f} GPU-hours, {eur}"
+
+
+def _per_task_cost(run_cost: Cost) -> str:
+    wall_clock, lower_bound = run_cost.wall_clock.eur_per_task, run_cost.request_time.eur_per_task
+    if wall_clock is None and lower_bound is None:
+        return NOT_MEASURED
+    return ", ".join(
+        f"{NOT_MEASURED if value is None else f'{value:.6f} EUR'} {basis}"
+        for value, basis in ((wall_clock, "on wall-clock"), (lower_bound, "as the lower bound"))
+    )
 
 
 def _inline_text(text: str) -> str:

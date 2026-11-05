@@ -171,6 +171,21 @@ def test_a_corrected_task_file_changes_the_score_of_only_the_runs_that_used_it(
         assert f"| 16 | {expected} |" in text, "the re-vote must score against the same definition"
 
 
+def test_a_half_cached_rerun_does_not_report_half_the_cost_per_task(
+    solver: Solver, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GPU_EUR_PER_HOUR", "2.5")
+    assert solver.solve("--samples", "4", "--limit", "1") == 0
+    fresh_report = solver.report(run_ids(capsys)[0])
+    assert "EUR on wall-clock" in fresh_report and "EUR as the lower bound" in fresh_report
+
+    assert solver.solve("--samples", "4", "--limit", "2") == 0
+    text = solver.report(run_ids(capsys)[0])
+    assert f"Cost per task: {NOT_MEASURED}\n" in text
+    assert "4 of 8 completions came from the cache" in text
+    assert "GPU-hours," in text, "the run's own cost is still there"
+
+
 def test_a_larger_run_requests_only_the_samples_it_lacks(solver: Solver) -> None:
     assert solver.solve("--samples", "4", "--limit", "1") == 0
     solver.model.requests.clear()

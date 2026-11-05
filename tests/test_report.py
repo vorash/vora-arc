@@ -204,30 +204,83 @@ def test_a_cached_run_reports_no_generation_rather_than_zero() -> None:
     assert generation.seconds is None
     assert "all 64 completions came from the cache" in generation.note
     run_cost = cost(data, 2.0)
-    assert run_cost.gpu_hours is None and run_cost.eur_per_task is None
+    for basis in (run_cost.wall_clock, run_cost.request_time):
+        assert (basis.hours, basis.eur, basis.eur_per_task) == (None, None, None), "no request means no GPU time to bill"
     text = render_markdown(data, 2.0, {})
     assert f"Cost per task: {NOT_MEASURED}" in text
     assert "0.000000" not in text
 
 
-def test_cost_is_gpu_hours_times_price_per_task() -> None:
-    data = run_data(phases=(phase("arc1/a", 1_800_000), phase("arc1/b", 1_800_000)))
+def test_cost_leads_with_wall_clock_and_gives_the_request_time_as_the_lower_bound() -> None:
+    data = run_data(
+        run=SolveRun("r1", SETTINGS, "finished", None, STARTED, STARTED + timedelta(hours=2)),
+        phases=(phase("arc1/a", 1_800_000), phase("arc1/b", 1_800_000)),
+    )
     run_cost = cost(data, 2.0)
-    assert run_cost.gpu_hours == pytest.approx(1.0)
-    assert run_cost.eur_per_task == pytest.approx(1.0), "1 h at 2 EUR over 2 tasks"
+    assert run_cost.wall_clock.hours == pytest.approx(2.0)
+    assert run_cost.wall_clock.eur == pytest.approx(4.0), "2 h rented at 2 EUR"
+    assert run_cost.wall_clock.eur_per_task == pytest.approx(2.0), "over 2 tasks"
+    assert run_cost.request_time.hours == pytest.approx(1.0)
+    assert run_cost.request_time.eur == pytest.approx(2.0)
+    assert run_cost.request_time.eur_per_task == pytest.approx(1.0)
+    assert run_cost.notes == ()
+
+    text = render_markdown(data, 2.0, {})
+    assert "- Wall-clock, what a rented GPU costs for this run: 2.000000 GPU-hours, 4.000000 EUR\n" in text
+    assert "- Time with a model request open, the lower bound: 1.000000 GPU-hours, 2.000000 EUR\n" in text
+    assert "- Cost per task: 2.000000 EUR on wall-clock, 1.000000 EUR as the lower bound\n" in text
+    assert text.index("- Wall-clock,") < text.index("- Time with a model request open")
 
 
-def test_no_price_means_no_cost() -> None:
+def test_no_price_means_no_cost_but_the_hours_stay() -> None:
     run_cost = cost(run_data(), None)
-    assert run_cost.eur_per_task is None and run_cost.gpu_hours is not None
-    assert "GPU_EUR_PER_HOUR" in run_cost.note
-    assert f"Price: {NOT_MEASURED}" in render_markdown(run_data(), None, {})
+    assert run_cost.wall_clock.hours == pytest.approx(0.025), "90 seconds"
+    assert run_cost.wall_clock.eur is None and run_cost.request_time.eur is None
+    assert "GPU_EUR_PER_HOUR is not set" in run_cost.notes
+    text = render_markdown(run_data(), None, {})
+    assert f"Price: {NOT_MEASURED}" in text
+    assert f"Cost per task: {NOT_MEASURED}" in text
+    assert f"0.025000 GPU-hours, {NOT_MEASURED}" in text
 
 
-def test_a_partly_cached_run_says_what_its_cost_covers() -> None:
+def test_a_partly_cached_run_has_no_cost_per_task() -> None:
+    # Task b was all fresh, task a all cached: dividing by both tasks would show half the real cost.
+    data = run_data(phases=(phase("arc1/a", None, 0, 32), phase("arc1/b", 1000, 32, 0)))
+    run_cost = cost(data, 2.0)
+    assert run_cost.wall_clock.eur_per_task is None and run_cost.request_time.eur_per_task is None
+    assert run_cost.wall_clock.eur == pytest.approx(0.05), "the run's own figures still stand"
+    assert run_cost.request_time.eur == pytest.approx(2.0 / 3600)
+    assert "32 of 64 completions came from the cache" in " ".join(run_cost.notes)
+    assert f"Cost per task: {NOT_MEASURED}\n" in render_markdown(data, 2.0, {})
+    assert "covers 32 of 64" in time_split(data)[0].note
+
+
+def test_one_cached_completion_is_enough_to_withhold_cost_per_task() -> None:
+    data = run_data(phases=(phase("arc1/a", 1000, 31, 1), phase("arc1/b", 1000, 32, 0)))
+    assert cost(data, 2.0).request_time.eur_per_task is None
+
+
+def test_the_cached_note_survives_a_missing_price() -> None:
     data = run_data(phases=(phase("arc1/a", 1000, 8, 24),))
-    assert "covers 8 of 32" in cost(data, 2.0).note
-    assert "covers 8 of 32" in time_split(data)[0].note
+    notes = " ".join(cost(data, None).notes)
+    assert "GPU_EUR_PER_HOUR is not set" in notes and "24 of 32 completions came from the cache" in notes
+    text = render_markdown(data, None, {})
+    assert "- Note: 24 of 32 completions came from the cache" in text
+
+
+@pytest.mark.parametrize(
+    ("status", "finished_at"),
+    [("failed", STARTED + timedelta(hours=1)), ("interrupted", STARTED + timedelta(hours=1)), ("running", None)],
+)
+def test_a_run_that_did_not_finish_has_no_wall_clock_cost(status: str, finished_at: datetime | None) -> None:
+    data = run_data(run=SolveRun("r1", SETTINGS, status, None, STARTED, finished_at))
+    run_cost = cost(data, 2.0)
+    assert (run_cost.wall_clock.hours, run_cost.wall_clock.eur, run_cost.wall_clock.eur_per_task) == (None, None, None)
+    assert run_cost.request_time.eur_per_task is not None, "the requests it logged are still a lower bound"
+    assert "a run that did not finish has no wall-clock cost" in run_cost.notes
+    text = render_markdown(data, 2.0, {})
+    assert f"- Wall-clock, what a rented GPU costs for this run: {NOT_MEASURED}\n" in text
+    assert f"- Cost per task: {NOT_MEASURED} on wall-clock, " in text
 
 
 def test_a_run_that_did_not_finish_says_so() -> None:
