@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import contextlib
+import base64
 import json
+import logging
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any
@@ -64,6 +66,51 @@ def run_ids(capsys: pytest.CaptureFixture[str]) -> list[str]:
 def query(url: str, sql: str) -> list[tuple[Any, ...]]:
     with psycopg.connect(url) as connection:
         return connection.execute(sql.encode()).fetchall()
+
+
+def database_text(url: str) -> str:
+    tables = query(url, "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")
+    assert tables, "an empty dump would prove nothing"
+    return "\n".join(str(query(url, f'SELECT row_to_json(t)::text FROM "{table}" t')) for table, in tables)
+
+
+@pytest.mark.parametrize(
+    "faults",
+    [[500, 500], ["drop", "drop"], [(400, "<html><h1>Bad</h1>asked http://user:secret@gpu/v1</html>")]],
+    ids=["gave-up", "connection-dropped", "error-page-echoing-the-url"],
+)
+def test_a_password_in_the_model_url_reaches_no_log_database_or_report(
+    solver: Solver,
+    database_url: str,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    faults: list[Any],
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    monkeypatch.setenv("VLLM_URL", solver.model.url.replace("http://", "http://user:secret@"))
+    assert solver.solve("--samples", "4", "--limit", "1") == 0
+    good_run = run_ids(capsys)[0]
+    assert solver.model.requests[0]["authorization"] == "Basic " + base64.b64encode(b"user:secret").decode(), (
+        "the server must still get the credentials"
+    )
+
+    solver.model.faults.extend(faults)
+    assert solver.solve("--samples", "4", "--limit", "2") == 1
+    captured = capsys.readouterr()
+    failed = query(database_url, "SELECT id, error FROM solve_runs WHERE status = 'failed'")
+    assert len(failed) == 1 and failed[0][1], "the failure itself must be recorded"
+    reports = solver.report(good_run) + solver.report(failed[0][0])
+
+    assert "chat/completions" in captured.err, "the host is still named, so the error stays useful"
+    for sink, text in {
+        "log": caplog.text,
+        "stdout": captured.out,
+        "stderr": captured.err,
+        "database": database_text(database_url),
+        "report": reports,
+    }.items():
+        assert "secret" not in text, f"the password reached the {sink}"
 
 
 def test_a_run_stores_every_result_and_a_report_reads_them(

@@ -14,7 +14,7 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from .model import Grid, GridResult, GridStatus, Task, Verdict, storable_text
+from .model import Grid, GridResult, GridStatus, Task, Verdict, redact_userinfo, storable_text
 from .pipeline import CandidateResult, TaskResult
 from .tasks import parse_task
 
@@ -262,7 +262,7 @@ class Store:
     async def finish_run(self, run_id: str, error: str | None = None) -> None:
         await self._connection.execute(
             "UPDATE solve_runs SET status = %s, error = %s, finished_at = now() WHERE id = %s",
-            ("failed" if error else "finished", storable_text(error) if error else None, run_id),
+            ("failed" if error else "finished", storable_text(redact_userinfo(error)) if error else None, run_id),
         )
 
     async def save_task_result(self, run_id: str, key: str, result: TaskResult) -> None:

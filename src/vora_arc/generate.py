@@ -10,12 +10,12 @@ import os
 import re
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 import httpx
 
-from .model import Grid, Task, storable_text
+from .model import Grid, Task, redact_userinfo, storable_text
 
 log = logging.getLogger(__name__)
 
@@ -45,13 +45,29 @@ class ModelConfig:
     model: str
     temperature: float = TEMPERATURE
     max_tokens: int = MAX_TOKENS
+    auth: tuple[str, str] | None = field(default=None, repr=False)
 
     @classmethod
     def from_env(cls) -> ModelConfig:
         missing = [name for name in ("VLLM_URL", "VLLM_MODEL") if not os.environ.get(name)]
         if missing:
             raise SystemExit(f"set {' and '.join(missing)}: VLLM_URL is the API base, e.g. http://gpu:8000/v1")
-        return cls(url=os.environ["VLLM_URL"], model=os.environ["VLLM_MODEL"])
+        url, auth = _split_credentials(os.environ["VLLM_URL"])
+        return cls(url=url, model=os.environ["VLLM_MODEL"], auth=auth)
+
+
+def _split_credentials(raw: str) -> tuple[str, tuple[str, str] | None]:
+    """Separate a URL's credentials from it. httpx logs and raises the URL it was given, password included."""
+    try:
+        url = httpx.URL(raw)
+    except httpx.InvalidURL:
+        # The parser's message can quote the password, as in "Invalid port: 'secret'".
+        raise SystemExit("VLLM_URL is not a valid URL") from None
+    if url.scheme not in ("http", "https") or not url.host:
+        raise SystemExit("VLLM_URL must be an http or https URL with a host")
+    if not url.userinfo:
+        return raw, None
+    return str(url.copy_with(username=None, password=None)), (url.username, url.password)
 
 
 class CompletionCache(Protocol):
@@ -150,12 +166,13 @@ async def _request(http: httpx.AsyncClient, config: ModelConfig, prompt: str, n:
         "n": n,
     }
     url = f"{config.url.rstrip('/')}/chat/completions"
+    auth = httpx.BasicAuth(*config.auth) if config.auth else httpx.USE_CLIENT_DEFAULT
     delays = iter(RETRY_DELAYS_S)
     elapsed_ms = 0
     while True:
         started = time.monotonic()
         try:
-            texts = _completions(await http.post(url, json=body))
+            texts = _completions(await http.post(url, json=body, auth=auth))
             return texts[:n], elapsed_ms + _elapsed_ms(started)
         except (httpx.TransportError, _TransientResponse) as error:
             problem = f"{type(error).__name__}: {error}"
@@ -172,7 +189,9 @@ def _completions(response: httpx.Response) -> list[str]:
     if status >= 500 or status in _RETRYABLE_STATUS:
         raise _TransientResponse(f"HTTP {status}")
     if status != 200:
-        raise ModelError(f"{response.url}: HTTP {status}: {response.text[:500]}")
+        # The body can be a proxy's HTML error page, and can quote the URL it was asked for.
+        body = " ".join(redact_userinfo(response.text).split())[:500]
+        raise ModelError(f"{response.url}: HTTP {status}: {body}")
     try:
         texts: list[Any] = [choice["message"]["content"] for choice in response.json()["choices"]]
     except (ValueError, KeyError, TypeError) as error:

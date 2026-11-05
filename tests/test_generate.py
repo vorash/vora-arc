@@ -51,6 +51,34 @@ def config(fake: FakeModel, name: str = "m1") -> ModelConfig:
     return ModelConfig(url=fake.url, model=name)
 
 
+@pytest.mark.parametrize(
+    "bad",
+    ["http://user:secret", "http://user:secret@host:abc/v1", "user:secret@host/v1"],
+    ids=["password-read-as-port", "bad-port", "no-scheme"],
+)
+def test_a_bad_model_url_is_refused_without_quoting_it(monkeypatch: pytest.MonkeyPatch, bad: str) -> None:
+    monkeypatch.setenv("VLLM_URL", bad)
+    monkeypatch.setenv("VLLM_MODEL", "m")
+    with pytest.raises(SystemExit, match="VLLM_URL") as refused:
+        ModelConfig.from_env()
+    assert "secret" not in str(refused.value)
+
+
+def test_a_model_url_without_credentials_is_used_as_given(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VLLM_URL", "http://gpu:8000/v1/")
+    monkeypatch.setenv("VLLM_MODEL", "m")
+    assert ModelConfig.from_env() == ModelConfig(url="http://gpu:8000/v1/", model="m")
+
+
+def test_credentials_leave_the_url_and_the_repr(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VLLM_URL", "http://us%40er:s%2Fecret@gpu:8000/v1")
+    monkeypatch.setenv("VLLM_MODEL", "m")
+    config = ModelConfig.from_env()
+    assert config.url == "http://gpu:8000/v1"
+    assert config.auth == ("us@er", "s/ecret"), "a percent-encoded password must still authenticate"
+    assert "ecret" not in repr(config)
+
+
 def test_the_prompt_shows_the_examples_and_test_inputs_but_never_a_test_output() -> None:
     prompt = ask_for_program(task_prompt(TASK))
     assert "1 2\n3 4" in prompt and "4 3\n2 1" in prompt

@@ -194,6 +194,19 @@ def test_a_run_that_did_not_finish_says_so() -> None:
     assert f"Total wall-clock: {NOT_MEASURED}" in text
 
 
+def test_an_error_page_cannot_break_the_report() -> None:
+    page = "<html>\n# Bad Gateway\n\n[click](http://user:secret@gpu/v1) | `code` *x*\n</html>\n" + "x" * 2000
+    failed = SolveRun("r1", SETTINGS, "failed", f"ModelError: {page}", STARTED, None)
+    text = render_markdown(run_data(run=failed), None, {})
+    status = next(line for line in text.splitlines() if line.startswith("- Status: failed"))
+    assert "<" not in status and "&lt;html&gt;" in status, "a tag must not reach the Markdown"
+    assert "\\[click\\](http://gpu/v1) \\| \\`code\\` \\*x\\*" in status, "nor a link, table cell, code span or emphasis"
+    assert "# Bad Gateway" in status and "\n# Bad Gateway" not in text, "a heading in the page stays on the status line"
+    assert "secret" not in text
+    assert len(status) < 1000 and status.endswith("..."), "a long page is cut, and says so"
+    assert text.index("- Total wall-clock") > text.index("- Status"), "the header carries on after the error"
+
+
 def test_an_empty_run_invents_nothing(tmp_path: Path) -> None:
     empty = SolveRun("r1", SETTINGS, "failed", "ModelError: down", STARTED, None)
     data = run_data(run=empty, tasks={}, candidates=(), runs=(), phases=(), answers=())

@@ -3,7 +3,9 @@ what a run didn't measure says so instead of showing zero."""
 
 from __future__ import annotations
 
+import html
 import os
+import re
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -12,13 +14,16 @@ from pathlib import Path
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
-from .model import Verdict
+from .model import Verdict, redact_userinfo
 from .store import CandidateRow, RunData
 from .vote import Ballot, ballot, vote
 
 NOT_MEASURED = "not measured"
 CANDIDATE_COUNTS = (16, 32, 64, 128)
 INFRA_ERROR = "Vora failed (no verdict)"
+MAX_ERROR_CHARS = 500
+
+_MARKDOWN_INLINE = re.compile(r"[\\`*_\[\]~|]")
 
 _SURFACE = "#fcfcfb"
 _INK = "#0b0b0b"
@@ -183,7 +188,7 @@ def render_markdown(data: RunData, gpu_eur_per_hour: float | None, charts: dict[
         + (f" (limit {settings.task_limit})" if settings.task_limit else ""),
         f"- Model: {settings.model}; {settings.samples} samples per task; refinement {'on' if settings.refine else 'off'}",
         f"- Sandbox: profile {settings.profile}, backend {settings.backend}, at most {settings.max_concurrency} at a time",
-        f"- Status: {data.run.status}" + (f": {data.run.error}" if data.run.error else ""),
+        f"- Status: {data.run.status}" + (f": {_inline_text(data.run.error)}" if data.run.error else ""),
         f"- Total wall-clock: {_run_wall_clock(data)}",
     ]
     if data.run.status != "finished":
@@ -252,6 +257,14 @@ def write_report(data: RunData, directory: Path, gpu_eur_per_hour: float | None)
     path = directory / "report.md"
     path.write_text(render_markdown(data, gpu_eur_per_hour, charts))
     return path
+
+
+def _inline_text(text: str) -> str:
+    """Untrusted text as part of one Markdown line: it can't open a block, a link or a tag."""
+    line = " ".join(redact_userinfo(text).split())
+    if len(line) > MAX_ERROR_CHARS:
+        line = line[:MAX_ERROR_CHARS] + "..."
+    return _MARKDOWN_INLINE.sub(r"\\\g<0>", html.escape(line, quote=False))
 
 
 def _ballot(candidate: CandidateRow) -> Ballot | None:

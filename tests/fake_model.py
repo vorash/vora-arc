@@ -30,13 +30,14 @@ class FakeModel:
     """`canned(prompt)` gives the completions for a prompt, served in order and cycled.
 
     `faults` queues what the next requests get instead of completions: an HTTP
-    status, "drop" to close the connection, or "garbage" for a 200 that isn't JSON.
+    status, a (status, body) pair, "drop" to close the connection, or "garbage" for
+    a 200 that isn't JSON.
     """
 
     def __init__(self, canned: Callable[[str], Sequence[str]]) -> None:
         self.canned = canned
         self.requests: list[dict[str, Any]] = []
-        self.faults: deque[int | str] = deque()
+        self.faults: deque[int | str | tuple[int, str]] = deque()
         self.max_choices_per_response: int | None = None
         self._served: Counter[str] = Counter()
         self._lock = threading.Lock()
@@ -80,12 +81,14 @@ class FakeModel:
             def do_POST(self) -> None:
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 with fake._lock:
-                    fake.requests.append({"path": self.path, **body})
+                    fake.requests.append({"path": self.path, "authorization": self.headers.get("Authorization"), **body})
                     fault = fake.faults.popleft() if fake.faults else None
                 if fault == "drop":
                     self.connection.close()
                 elif fault == "garbage":
                     self._reply(200, b"<html>not json</html>")
+                elif isinstance(fault, tuple):
+                    self._reply(fault[0], fault[1].encode())
                 elif isinstance(fault, int):
                     self._reply(fault, b'{"error": "injected"}')
                 else:

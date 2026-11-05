@@ -225,6 +225,15 @@ async def test_an_unknown_run_is_none(database_url: str) -> None:
         assert await store.load_run("nope") is None
 
 
+async def test_a_recorded_error_never_keeps_url_credentials(database_url: str) -> None:
+    async with open_store(database_url) as store:
+        run_id = await store.begin_run(SETTINGS)
+        await store.finish_run(run_id, "BoomError: while calling https://user:p%40ss@gpu:8000/v1/chat/completions")
+        data = await store.load_run(run_id)
+    assert data is not None
+    assert data.run.error == "BoomError: while calling https://gpu:8000/v1/chat/completions"
+
+
 async def test_a_failed_run_records_why(database_url: str) -> None:
     async with open_store(database_url) as store:
         run_id = await store.begin_run(SETTINGS)
