@@ -22,6 +22,8 @@ DATABASE_URL_ENV = "VORA_ARC_DATABASE_URL"
 
 # Spec tables, plus what telling runs apart and reporting honestly need:
 #   solve_runs           one row per `vora-arc solve`; the spec's `runs` means sandbox runs.
+#   solve_run_tasks      each task as that run solved it, which is what its report scores
+#                        against. `tasks` holds only ids: a task file can be corrected between runs.
 #   candidates.run_id, answers.run_id, answers.round
 #   candidates.sample_index, prompt_hash  tie a candidate to its completion, and let
 #                        a report re-vote on the first k samples.
@@ -32,8 +34,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS tasks (
     id text PRIMARY KEY,
     dataset text NOT NULL,
-    split text NOT NULL,
-    json jsonb NOT NULL
+    split text NOT NULL
 );
 CREATE TABLE IF NOT EXISTS completions (
     task_id text NOT NULL REFERENCES tasks (id),
@@ -59,6 +60,12 @@ CREATE TABLE IF NOT EXISTS solve_runs (
     error text,
     started_at timestamptz NOT NULL DEFAULT now(),
     finished_at timestamptz
+);
+CREATE TABLE IF NOT EXISTS solve_run_tasks (
+    run_id text NOT NULL REFERENCES solve_runs (id),
+    task_id text NOT NULL REFERENCES tasks (id),
+    json jsonb NOT NULL,
+    PRIMARY KEY (run_id, task_id)
 );
 CREATE TABLE IF NOT EXISTS candidates (
     id bigserial PRIMARY KEY,
@@ -238,10 +245,10 @@ class Store:
             )
             return {index: text for index, text in await cursor.fetchall()}
 
-    async def save_task_definition(self, key: str, dataset: str, split: str, task: Task) -> None:
+    async def register_task(self, key: str, dataset: str, split: str) -> None:
         await self._connection.execute(
-            "INSERT INTO tasks (id, dataset, split, json) VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
-            (key, dataset, split, Jsonb(_task_json(task))),
+            "INSERT INTO tasks (id, dataset, split) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
+            (key, dataset, split),
         )
 
     async def begin_run(self, settings: RunSettings) -> str:
@@ -271,8 +278,12 @@ class Store:
         )
 
     async def save_task_result(self, run_id: str, key: str, result: TaskResult) -> None:
-        """Write one task's candidates, runs, answers and timings together, or not at all."""
+        """Write one task as it was solved, with its candidates, runs, answers and timings, or none of it."""
         async with self._connection.transaction():
+            await self._connection.execute(
+                "INSERT INTO solve_run_tasks (run_id, task_id, json) VALUES (%s, %s, %s)",
+                (run_id, key, Jsonb(_task_json(result.task))),
+            )
             ids: dict[tuple[int, int], int] = {}
             for candidate in result.candidates:
                 ids[(candidate.round, candidate.sample_index)] = await self._insert_candidate(
@@ -348,10 +359,8 @@ class Store:
             row = await cursor.fetchone()
             if row is None:
                 return None
-            await cursor.execute(
-                "SELECT id, json FROM tasks WHERE id IN (SELECT task_id FROM task_phases WHERE run_id = %s)", (run_id,)
-            )
-            tasks = {r["id"]: parse_task(r["id"].split("/", 1)[1], r["json"]) for r in await cursor.fetchall()}
+            await cursor.execute("SELECT task_id, json FROM solve_run_tasks WHERE run_id = %s", (run_id,))
+            tasks = {r["task_id"]: parse_task(r["task_id"].split("/", 1)[1], r["json"]) for r in await cursor.fetchall()}
             await cursor.execute(
                 "SELECT c.task_id, c.round, c.sample_index, c.program, c.duplicate_of IS NOT NULL AS is_duplicate, "
                 "c.verdict, c.infra_error, r.result_json -> 'grids' AS grids "

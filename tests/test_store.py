@@ -38,7 +38,7 @@ SETTINGS = RunSettings("arc1", "training", None, 4, False, "m", "python-arc", "g
 
 async def solve(store: Store, canned: list[str], key: str = KEY, task: Task = TASK) -> TaskResult:
     server = FakeModel(lambda prompt: canned)
-    await store.save_task_definition(key, "arc1", "training", task)
+    await store.register_task(key, "arc1", "training")
 
     async def scheduler(task: Task, programs: Any) -> Any:
         return await schedule(None, None, task, programs, max_concurrency=4)  # type: ignore[arg-type]
@@ -69,7 +69,7 @@ async def test_a_second_run_on_postgres_makes_no_model_request(database_url: str
     with server.running():
         config = ModelConfig(url=server.url, model="m")
         async with open_store(database_url) as store, httpx.AsyncClient(timeout=5.0) as http:
-            await store.save_task_definition(KEY, "arc1", "training", TASK)
+            await store.register_task(KEY, "arc1", "training")
             first = await sample(http, config, store, KEY, "p", 20)
             requests = len(server.requests)
             second = await sample(http, config, store, KEY, "p", 20)
@@ -82,7 +82,7 @@ async def test_a_second_run_on_postgres_makes_no_model_request(database_url: str
 
 async def test_a_new_connection_still_sees_the_cache(database_url: str) -> None:
     async with open_store(database_url) as store:
-        await store.save_task_definition(KEY, "arc1", "training", TASK)
+        await store.register_task(KEY, "arc1", "training")
         await store.save_completions(KEY, "h", "m", {0: "text", 1: "more"})
     async with open_store(database_url) as store:
         assert await store.load_completions(KEY, "h") == {0: "text", 1: "more"}
@@ -91,8 +91,8 @@ async def test_a_new_connection_still_sees_the_cache(database_url: str) -> None:
 async def test_the_cache_separates_tasks_prompts_and_samples(database_url: str) -> None:
     other = "arc2/other"
     async with open_store(database_url) as store:
-        await store.save_task_definition(KEY, "arc1", "training", TASK)
-        await store.save_task_definition(other, "arc2", "training", TASK)
+        await store.register_task(KEY, "arc1", "training")
+        await store.register_task(other, "arc2", "training")
         await store.save_completions(KEY, "h1", "m", {0: "a", 1: "b"})
         await store.save_completions(KEY, "h2", "m", {0: "c"})
         await store.save_completions(other, "h1", "m", {0: "d"})
@@ -103,7 +103,7 @@ async def test_the_cache_separates_tasks_prompts_and_samples(database_url: str) 
 
 async def test_saving_a_completion_twice_keeps_the_first(database_url: str) -> None:
     async with open_store(database_url) as store:
-        await store.save_task_definition(KEY, "arc1", "training", TASK)
+        await store.register_task(KEY, "arc1", "training")
         assert await store.save_completions(KEY, "h", "m", {0: "first"}) == {0: "first"}
         assert await store.save_completions(KEY, "h", "m", {0: "second", 1: "new"}) == {0: "first", 1: "new"}
         assert await store.load_completions(KEY, "h") == {0: "first", 1: "new"}
@@ -135,7 +135,7 @@ async def test_two_runs_racing_for_a_sample_judge_the_one_text_that_is_stored(
 
     with server.running():
         async with open_store(database_url) as one, open_store(database_url) as other, httpx.AsyncClient(timeout=5.0) as http:
-            await one.save_task_definition(KEY, "arc1", "training", TASK)
+            await one.register_task(KEY, "arc1", "training")
             first, second = await asyncio.gather(solve_on(one, http), solve_on(other, http))
             for store, result in ((one, first), (other, second)):
                 await store.save_task_result(await store.begin_run(SETTINGS), KEY, result)
@@ -157,9 +157,28 @@ async def test_two_runs_racing_for_a_sample_judge_the_one_text_that_is_stored(
 async def test_arc1_and_arc2_can_hold_the_same_id_with_different_grids(database_url: str) -> None:
     other = Task(id=TASK.id, train=(Pair(((9,),), ((9,),)),), test=(model.TestCase(((9,),), None),))
     async with open_store(database_url) as store:
-        await store.save_task_definition(task_key("arc1", TASK), "arc1", "evaluation", TASK)
-        await store.save_task_definition(task_key("arc2", other), "arc2", "evaluation", other)
-    assert len(rows(database_url, "SELECT id FROM tasks")) == 2
+        run_id = await store.begin_run(SETTINGS)
+        for dataset, task in (("arc1", TASK), ("arc2", other)):
+            key = task_key(dataset, task)
+            await store.register_task(key, dataset, "evaluation")
+            await store.save_task_result(run_id, key, TaskResult(task, (), (), 1, ()))
+        data = await store.load_run(run_id)
+    assert data is not None
+    assert data.tasks == {task_key("arc1", TASK): TASK, task_key("arc2", other): other}
+
+
+async def test_each_run_keeps_the_task_it_solved(database_url: str) -> None:
+    corrected = replace(TASK, test=(model.TestCase(((5, 6),), ((9, 9),)),))
+    async with open_store(database_url) as store:
+        await store.register_task(KEY, "arc1", "training")
+        before = await store.begin_run(SETTINGS)
+        await store.save_task_result(before, KEY, TaskResult(TASK, (), (), 1, ()))
+        after = await store.begin_run(SETTINGS)
+        await store.save_task_result(after, KEY, TaskResult(corrected, (), (), 1, ()))
+        first, second = await store.load_run(before), await store.load_run(after)
+    assert first is not None and second is not None
+    assert first.tasks[KEY] == TASK
+    assert second.tasks[KEY] == corrected
 
 
 async def test_a_task_round_trips_with_and_without_test_outputs(database_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -254,13 +273,13 @@ async def test_a_failed_save_leaves_nothing_of_that_task(database_url: str, monk
             await store.save_task_result(run_id, KEY, broken)
         data = await store.load_run(run_id)
     assert data is not None
-    assert data.candidates == () and data.runs == () and data.answers == ()
+    assert data.candidates == () and data.runs == () and data.answers == () and data.tasks == {}
 
 
 async def test_a_candidate_cannot_have_both_a_verdict_and_an_infra_error(database_url: str) -> None:
     async with open_store(database_url) as store:
         run_id = await store.begin_run(SETTINGS)
-        await store.save_task_definition(KEY, "arc1", "training", TASK)
+        await store.register_task(KEY, "arc1", "training")
         await store.save_completions(KEY, "h", "m", {0: "text"})
         both = CandidateResult(1, 0, "h", "p", None, Verdict.FAILED, 0.0, "error", ())
         with pytest.raises(psycopg.errors.CheckViolation):

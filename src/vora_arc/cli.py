@@ -95,8 +95,7 @@ async def solve(args: argparse.Namespace) -> int:
         try:
             for task in tasks:
                 key = task_key(args.dataset, task)
-                await store.save_task_definition(key, args.dataset, args.split, task)
-
+                await store.register_task(key, args.dataset, args.split)
                 result = await solve_task(
                     task,
                     sampler=partial(sample, http, model, store, key),

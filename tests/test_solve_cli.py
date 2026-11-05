@@ -150,6 +150,23 @@ def test_a_second_run_pays_for_nothing_and_its_report_says_so(
     assert "Overall, 2 attempts | 1 / 1 (100.0%)" in text, "cached samples still get judged and voted on"
 
 
+def test_a_corrected_task_file_changes_the_score_of_only_the_runs_that_used_it(
+    solver: Solver, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert solver.solve("--samples", "16", "--limit", "1") == 0
+    corrected = {**GRID_TASK, "test": [{"input": [[5, 6]], "output": [[9, 9]]}]}
+    (solver.root / "arc1" / "training" / "aaaa0001.json").write_text(json.dumps(corrected))
+    assert solver.solve("--samples", "16", "--limit", "1") == 0
+    assert len(solver.model.requests) == 1, "the model never saw a test output, so its samples still stand"
+
+    before, after = run_ids(capsys)
+    # The cached program answers [[6, 5]]: right before the correction, wrong after it.
+    for run_id, expected in ((before, "1 / 1 (100.0%)"), (after, "0 / 1 (0.0%)")):
+        text = solver.report(run_id)
+        assert f"Overall, 2 attempts | {expected} |" in text, "the answers stored at solve time"
+        assert f"| 16 | {expected} |" in text, "the re-vote must score against the same definition"
+
+
 def test_a_larger_run_requests_only_the_samples_it_lacks(solver: Solver) -> None:
     assert solver.solve("--samples", "4", "--limit", "1") == 0
     solver.model.requests.clear()
