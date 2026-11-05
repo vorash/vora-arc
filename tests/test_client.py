@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -119,6 +120,31 @@ async def run(fake: FakeVora, program: str = PROGRAM) -> Any:
     async with httpx.AsyncClient(transport=httpx.MockTransport(fake.route)) as http:
         vora = Vora(base_url="http://vora.test", api_key="vora_test", client=http)
         return await run_batch(vora, PROFILE, program, TASK, correlation_id="t1/c1")
+
+
+async def test_a_cancel_during_create_still_destroys_the_sandbox() -> None:
+    fake = FakeVora()
+    server_has_it = asyncio.Event()
+    reply = asyncio.Event()
+
+    async def route(request: httpx.Request) -> httpx.Response:
+        response = fake.route(request)
+        if request.method == "POST":
+            server_has_it.set()
+            await reply.wait()
+        return response
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(route)) as http:
+        vora = Vora(base_url="http://vora.test", api_key="vora_test", client=http)
+        job = asyncio.create_task(run_batch(vora, PROFILE, PROGRAM, TASK, correlation_id="t1/c1"))
+        await server_has_it.wait()
+        job.cancel()
+        await asyncio.sleep(0)
+        reply.set()
+        with pytest.raises(asyncio.CancelledError):
+            await job
+    assert fake.destroyed() == ["sbx_1"], "the server built it, so only this client can destroy it before the TTL"
+    assert fake.count("exec") == 0, "a cancelled job runs nothing"
 
 
 def test_shipped_profile_holds_the_spec_v2_limits() -> None:
