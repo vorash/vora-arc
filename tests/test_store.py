@@ -13,11 +13,16 @@ import psycopg
 import pytest
 from canned_runs import (
     CLOSE,
+    CRASHES,
+    FLAKY,
     GOOD,
+    GOOD_LONGER,
+    HANGS,
     JUNK,
     MEMORIZED,
     TASK,
     WRONG,
+    WRONG_ANSWER_PASSES,
     CannedRuns,
     batch,
     completions,
@@ -26,8 +31,9 @@ from fake_model import FakeModel
 
 from vora_arc import model
 from vora_arc.generate import ModelConfig, extract_program, sample
-from vora_arc.model import Pair, Task, Verdict
+from vora_arc.model import GridResult, GridStatus, Pair, Task, Verdict
 from vora_arc.pipeline import CandidateResult, TaskResult, solve_task
+from vora_arc.report import accuracy, accuracy_by_count, render_markdown, verdict_counts
 from vora_arc.schedule import schedule
 from vora_arc.store import RunSettings, Store, open_store, task_key
 from vora_arc.vote import Answer
@@ -215,6 +221,7 @@ async def test_a_task_result_is_stored_and_read_back(database_url: str, monkeypa
     original, duplicate = data.candidates[:2]
     assert not original.is_duplicate and duplicate.is_duplicate
     assert duplicate.grids == original.grids != (), "a duplicate reads its first copy's result"
+    assert all(grid.is_test for grid in original.grids)
     assert data.candidates[2].grids == ()
     assert len(data.runs) == len(runs.programs) == 4, "good twice, wrong once, memorized once"
     assert [(a.rank, a.votes, a.correct, a.round) for a in data.answers] == [(1, 2, True, 1)]
@@ -248,6 +255,75 @@ async def test_two_runs_of_one_task_stay_apart_and_share_completions(
     assert len(first_data.candidates) == len(second_data.candidates) == 2
     assert len(first_data.answers) == len(second_data.answers) == 1
     assert rows(database_url, "SELECT count(*) FROM completions") == [(2,)]
+
+
+def candidates_with_every_grid(url: str, run_id: str) -> dict[tuple[int, int], tuple[GridResult, ...]]:
+    """What load_run used to read: every grid of every candidate."""
+    found = rows(
+        url,
+        "SELECT c.round, c.sample_index, r.result_json -> 'grids' FROM candidates c "
+        "LEFT JOIN runs r ON r.candidate_id = COALESCE(c.duplicate_of, c.id) AND r.attempt = 1 "
+        f"WHERE c.run_id = '{run_id}'",
+    )
+    return {
+        (round_number, index): tuple(
+            GridResult(
+                g["index"],
+                g["is_test"],
+                GridStatus(g["status"]),
+                None if g["output"] is None else tuple(tuple(row) for row in g["output"]),
+                g["error"],
+                g["wall_ms"],
+            )
+            for g in grids or ()
+        )
+        for round_number, index, grids in found
+    }
+
+
+async def test_loading_only_what_a_report_votes_on_changes_no_number(
+    database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    CannedRuns(monkeypatch)
+    canned = completions(
+        GOOD, GOOD, GOOD, GOOD_LONGER, WRONG_ANSWER_PASSES, WRONG_ANSWER_PASSES, WRONG, WRONG,
+        CLOSE, CRASHES, HANGS, MEMORIZED, FLAKY, JUNK, JUNK, JUNK,
+    )  # fmt: skip
+    settings = replace(SETTINGS, samples=len(canned))
+    async with open_store(database_url) as store:
+        run_id = await store.begin_run(settings)
+        await store.save_task_result(run_id, KEY, await solve(store, canned))
+        await store.finish_run(run_id)
+        data = await store.load_run(run_id)
+    assert data is not None
+
+    loaded = [g for c in data.candidates for g in c.grids]
+    assert len(loaded) == 6 and all(g.is_test for g in loaded), "one test grid for each of six passed candidates"
+    assert all(not c.grids for c in data.candidates if c.verdict is not Verdict.PASSED)
+    assert data.candidates[1].is_duplicate and data.candidates[1].grids, "a duplicate still votes with its first copy's grids"
+
+    assert [(r.solved, r.total) for r in accuracy(data)[:2]] == [(1, 1), (1, 1)]
+    assert [(p.count, p.solved, p.total) for p in accuracy_by_count(data)] == [
+        (16, 1, 1),
+        (32, None, 1),
+        (64, None, 1),
+        (128, None, 1),
+    ]
+    assert verdict_counts(data) == {
+        "unparseable": 3,
+        "timeout": 1,
+        "crashed": 1,
+        "invalid": 0,
+        "failed": 3,
+        "memorized": 1,
+        "nondeterministic": 1,
+        "passed": 6,
+    }
+
+    every_grid = candidates_with_every_grid(database_url, run_id)
+    assert sum(len(grids) for grids in every_grid.values()) > 3 * len(loaded), "the old read really held more"
+    unfiltered = replace(data, candidates=tuple(replace(c, grids=every_grid[(c.round, c.sample_index)]) for c in data.candidates))
+    assert render_markdown(data, 2.0, {}) == render_markdown(unfiltered, 2.0, {})
 
 
 async def test_text_from_a_hostile_program_cannot_break_a_save(database_url: str, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -157,7 +157,8 @@ class CandidateRow:
     verdict: Verdict | None
     infra_error: str | None
     grids: tuple[GridResult, ...]
-    """The results this program got on its first run, shared with its first copy."""
+    """A passed candidate's test results from its first run, shared with its first copy.
+    A report votes on nothing else, so nothing else is loaded."""
 
 
 @dataclass(frozen=True)
@@ -363,8 +364,10 @@ class Store:
             tasks = {r["task_id"]: parse_task(r["task_id"].split("/", 1)[1], r["json"]) for r in await cursor.fetchall()}
             await cursor.execute(
                 "SELECT c.task_id, c.round, c.sample_index, c.program, c.duplicate_of IS NOT NULL AS is_duplicate, "
-                "c.verdict, c.infra_error, r.result_json -> 'grids' AS grids "
-                "FROM candidates c LEFT JOIN runs r ON r.candidate_id = COALESCE(c.duplicate_of, c.id) AND r.attempt = 1 "
+                "c.verdict, c.infra_error, "
+                "jsonb_path_query_array(r.result_json -> 'grids', '$[*] ? (@.is_test == true)') AS grids "
+                "FROM candidates c LEFT JOIN runs r ON c.verdict = 'passed' "
+                "AND r.candidate_id = COALESCE(c.duplicate_of, c.id) AND r.attempt = 1 "
                 "WHERE c.run_id = %s ORDER BY c.task_id, c.round, c.sample_index",
                 (run_id,),
             )
