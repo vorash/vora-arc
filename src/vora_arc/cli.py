@@ -12,9 +12,12 @@ from pathlib import Path
 
 import httpx
 
-from .bench import BenchSettings, load_raw, render_summary, run_bench
+from .bench import BenchSettings, run_bench
+from .bench_summary import load_raw, render_summary
 from .client import PoolMode, connect, open_pool
+from .corpus import build_corpus, load_solutions, warmup_candidates
 from .generate import REQUEST_TIMEOUT_S, ModelConfig, ModelError, sample
+from .leak_report import read_leak_suites
 from .model import BatchResult, Verdict
 from .pipeline import solve_task
 from .profile import load_profile
@@ -26,8 +29,8 @@ from .verify import Failed, Outcome
 
 DEFAULT_DATA_DIR = Path("data")
 DEFAULT_RESULTS_DIR = Path("results")
-DEFAULT_BENCH_TASK = "3c9b0459"
-DEFAULT_BENCH_PROGRAM = Path("solutions") / f"{DEFAULT_BENCH_TASK}.py"
+DEFAULT_SOLUTIONS_DIR = Path("solutions")
+DEFAULT_CORPUS_SEED = 1
 
 
 def _non_negative_int(text: str) -> int:
@@ -155,21 +158,17 @@ async def write_run_report(args: argparse.Namespace) -> int:
 
 async def bench(args: argparse.Namespace) -> int:
     profile = load_profile(args.profile)
-    task = load_task(find_task(args.data_dir, args.dataset, args.task))
-    settings = BenchSettings(
-        PoolMode(args.mode),
-        args.candidates,
-        args.concurrency * 3 if args.warmup is None else args.warmup,
-        args.concurrency,
-        args.image_resolved_via,
-        args.server_version,
-    )
+    solutions = load_solutions(args.solutions)
+    tasks = {solution.task_id: load_task(find_task(args.data_dir, args.dataset, solution.task_id)) for solution in solutions}
+    corpus = build_corpus(solutions, args.candidates, args.seed)
+    warmup = warmup_candidates(solutions, args.concurrency * 3 if args.warmup is None else args.warmup)
+    settings = BenchSettings(PoolMode(args.mode), args.concurrency, args.image_resolved_via, args.server_version)
     async with connect(profile) as vora:
-        return await run_bench(profile, task, args.program.read_text(), settings, args.raw, vora=vora)
+        return await run_bench(profile, corpus, warmup, tasks, settings, args.raw, vora=vora)
 
 
 async def bench_summary(args: argparse.Namespace) -> int:
-    print(render_summary(load_raw(args.raw)), end="")
+    print(render_summary(load_raw(*args.raw), read_leak_suites(args.leak_pytest, args.leak_vora)), end="")
     return 0
 
 
@@ -193,11 +192,11 @@ def main(argv: list[str] | None = None) -> int:
     solver.add_argument("--pool", action="store_true", help="run programs on a warm pool instead of a fresh sandbox each")
     bencher = commands.add_parser("bench", help="run one arm of experiment 1 and append it to a raw file")
     bencher.add_argument("--mode", required=True, choices=[mode.value for mode in PoolMode])
-    bencher.add_argument("--candidates", type=_positive_int, default=10_000, help="measured runs")
+    bencher.add_argument("--candidates", type=_positive_int, default=10_000, help="candidates in the corpus, each run once")
+    bencher.add_argument("--seed", type=int, default=DEFAULT_CORPUS_SEED, help="the corpus seed; arms to compare share it")
     bencher.add_argument("--warmup", type=_non_negative_int, help="runs before measuring (default: 3 x --concurrency)")
     bencher.add_argument("--concurrency", type=_positive_int, default=8)
-    bencher.add_argument("--task", default=DEFAULT_BENCH_TASK, help="ARC task whose inputs every run uses")
-    bencher.add_argument("--program", default=DEFAULT_BENCH_PROGRAM, type=Path, help="file defining transform(grid)")
+    bencher.add_argument("--solutions", default=DEFAULT_SOLUTIONS_DIR, type=Path, help="hand-written solutions, one <task id>.py each")
     bencher.add_argument("--dataset", default="arc1", choices=["arc1", "arc2"])
     bencher.add_argument("--data-dir", default=DEFAULT_DATA_DIR, type=Path)
     bencher.add_argument("--profile", type=Path, help="profile TOML (default: $VORA_ARC_PROFILE, then profiles/python-arc.toml)")
@@ -208,8 +207,14 @@ def main(argv: list[str] | None = None) -> int:
         help="what you checked on the host; a client can't read it (docs/experiment-1.md)",
     )
     bencher.add_argument("--server-version", help="record this instead of asking GET /v1/runners")
-    summarizer = commands.add_parser("bench-summary", help="rebuild the summary from a raw file")
-    summarizer.add_argument("raw", type=Path)
+    summarizer = commands.add_parser("bench-summary", help="rebuild the summary from raw files")
+    summarizer.add_argument("raw", type=Path, nargs="+")
+    summarizer.add_argument(
+        "--leak-pytest", type=Path, action="append", default=[], help="tests/test_hostile.py's --junitxml file; repeat per backend"
+    )
+    summarizer.add_argument(
+        "--leak-vora", type=Path, action="append", default=[], help="the go test -v output of Vora's leak suite; repeat per backend"
+    )
     reporter = commands.add_parser("report", help="write a logged run's Markdown report and charts")
     reporter.add_argument("--run", required=True, help="run id printed by solve")
     reporter.add_argument("--out", default=DEFAULT_RESULTS_DIR, type=Path)

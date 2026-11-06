@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import json
 import threading
+import time
 from collections import deque
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -50,6 +51,8 @@ class Frames:
     frames: tuple[Frame, ...]
     hold: bool = False
     """Then wait for the client to leave, as a run in progress does."""
+    delay_s: float = 0.0
+    """Wait this long before the first frame, as a slow run does."""
 
 
 Script = Refuse | Frames
@@ -68,7 +71,9 @@ class Seen:
 class FakePools:
     transform: Callable[[list[list[int]]], list[list[int]]] = reverse_rows
     runs: deque[Script] = field(default_factory=deque)
-    """What the next runs get. Once empty, a run behaves as its pool's shape says."""
+    """What the next runs get. Once empty, `script_for` decides."""
+    script_for: Callable[[str, str], Script | None] = lambda pool, program: None
+    """Given the pool's name and the program, what this run gets. None: it behaves as its pool's shape says."""
     seen: list[Seen] = field(default_factory=list)
     specs: dict[str, dict[str, Any]] = field(default_factory=dict)
     state: str = "POOL_ACTIVE"
@@ -192,8 +197,11 @@ class FakePools:
             def do_POST(self) -> None:
                 parts, body = self._seen()
                 assert body is not None
+                stdin = json.loads(base64.b64decode(body["stdin"])) if "stdin" in body else {}
                 with fake._lock:
                     script = fake.runs.popleft() if fake.runs else None
+                    if script is None and "program" in stdin:
+                        script = fake.script_for(parts[2], stdin["program"])
                     fake.in_flight += 1
                     fake.max_in_flight = max(fake.max_in_flight, fake.in_flight)
                     fake._member_runs += 1
@@ -203,7 +211,8 @@ class FakePools:
                             fake.state = script.state
                         self._reply(script.status, {"error": script.error}, script.retry_after)
                         return
-                    stdin = json.loads(base64.b64decode(body["stdin"]))
+                    if isinstance(script, Frames):
+                        time.sleep(script.delay_s)
                     frames = script.frames if script else fake.default_frames(fake.specs.get(parts[2], {}), stdin)
                     self.send_response(200)
                     self.send_header("Content-Type", "application/x-ndjson")
