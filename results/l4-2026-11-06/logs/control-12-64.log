@@ -1,0 +1,16 @@
+19:51:15Z
+1s run 20261106T195116Z-adb599: 12 tasks, 64 samples each, model mistralai/Mistral-7B-Instruct-v0.3
+73s 25ff71a9: unsolved, 64 candidates
+116s 67a3c6ac: unsolved, 64 candidates
+146s a416b8f3: solved, 64 candidates
+162s 6150a2bd: solved, 64 candidates
+219s 0d3d703e: unsolved, 64 candidates
+260s 68b16354: unsolved, 64 candidates
+265s 3c9b0459: solved, 64 candidates
+278s 74dd1130: solved, 64 candidates
+322s b1948b0a: solved, 64 candidates
+349s c8f0f002: solved, 64 candidates
+367s d511f180: unsolved, 64 candidates
+384s ed36ccf7: solved, 64 candidates
+384s run 20261106T195116Z-adb599: solved 7 of 12; report with: vora-arc report --run 20261106T195116Z-adb599
+19:57:39Z

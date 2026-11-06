@@ -5,3 +5,4 @@ data/
 results/*
 !results/bench/
 !results/limiter/
+!results/l4-2026-11-06/

@@ -1,0 +1,25 @@
+19:12:33Z
+1s run 20261106T191234Z-ba739a: 20 tasks, 64 samples each, model mistralai/Mistral-7B-Instruct-v0.3
+123s 00576224: unsolved, 96 candidates
+130s 009d5c81: unsolved, 96 candidates
+146s WARNING:vora_arc.pipeline:05a7bcf2: not refined: http://127.0.0.1:8000/v1/chat/completions: HTTP 400: {"error":{"message":"This model's maximum context length is 32768 tokens. However, your prompt contains 48874 input tokens, which exceeds this limit even without any output tokens. Please reduce the length of the input prompt. (parameter=input_tokens, value=48874)","type":"BadRequestError","param":"input_tokens","code":400}}
+146s 05a7bcf2: unsolved, 64 candidates
+320s 00dbd492: unsolved, 96 candidates
+609s 0607ce86: unsolved, 96 candidates
+623s 0692e18c: unsolved, 96 candidates
+644s 03560426: unsolved, 96 candidates
+1015s 070dd51e: unsolved, 96 candidates
+1024s 08573cc6: unsolved, 96 candidates
+1130s 0934a4d8: unsolved, 96 candidates
+1379s 09c534e7: unsolved, 96 candidates
+1726s 0a2355a6: unsolved, 96 candidates
+1872s 0a1d4ef5: unsolved, 96 candidates
+1964s 0bb8deee: unsolved, 96 candidates
+2017s 0b17323b: unsolved, 96 candidates
+2080s 0c786b71: unsolved, 96 candidates
+2091s 0becf7df: unsolved, 96 candidates
+2163s 0c9aba6e: unsolved, 96 candidates
+2164s 0e671a1a: unsolved, 96 candidates
+2292s 0d87d2a6: unsolved, 96 candidates
+2292s run 20261106T191234Z-ba739a: solved 0 of 20; report with: vora-arc report --run 20261106T191234Z-ba739a
+19:50:45Z

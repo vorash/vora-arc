@@ -103,11 +103,14 @@ a real ARC task, the second run making no model request, every sandbox destroyed
 Ctrl-C with sandboxes running.
 Run it with `uv run pytest -m sandbox`.
 
-## Not verified until a real model exists
+## Verified on a real model
 
-- How often a real model's completions extract, and whether a 4096-token limit is enough.
-- Any accuracy, generation time or cost figure.
-- The request shape on vLLM itself: `/chat/completions` with `n` up to 16.
+[Experiments 2 and 3](experiments-2-3-results.md) ran on vLLM v0.32.0 with Mistral 7B.
+
+- `/chat/completions` with `n` up to 16 works.
+- 6,378 of 6,400 completions held an extractable program in the 100-task run, and 2.5% hit the 4,096-token
+  limit.
+- A real model reached `passed`, a vote and a correct answer on 7 of 12 simple tasks.
 
 ## Verified on a real pool
 
