@@ -91,8 +91,8 @@ runs, so their programs per second isn't comparable with the table.
 | Command | bwrap p50, ms | gVisor p50, ms |
 |---|---|---|
 | `true` | 3.2 | 12.2 |
-| `python3 -c pass` | 12.8 | 28.2 |
-| The runner with a hand-written solution | 40.9 | 76.4 |
+| `python3 -c pass` | 12.8 | 28.5 |
+| The runner with a hand-written solution | 40.9 | 75.6 |
 
 A program that fails to parse takes as long as one that runs (63.7 and 63.9 ms at p50 on bwrap, at
 concurrency 8), so the candidate's own work is a small part of this corpus's time.
@@ -106,10 +106,10 @@ concurrency 8), so the candidate's own work is a small part of this corpus's tim
 | 8 | 61.8 | 108.0 |
 | 16 | 100.5 | 171.2 |
 
-At concurrency 16 the host had 16% idle on bwrap, over 8 s of `vmstat`, and 4% idle on gVisor, from one
-`top` sample. To rule out the client and the pool, two client processes ran two pools at concurrency 8 each
-on bwrap. Together they reached 130 programs per second, against 127 for one client at 16, with the same
-exec p50, so neither of them is the limit. Concurrency 8 is one sandbox per physical core. The experiment's
+At concurrency 16 the host had 16% idle on bwrap and 17% on gVisor, over 8 s of `vmstat`. To rule out the
+client and the pool, two client processes ran two pools at concurrency 8 each on bwrap. Together they reached
+129 programs per second, against 126 for one client at 16, with about the same exec p50 (101.1 and 100.4 ms),
+so neither of them is the limit. Concurrency 8 is one sandbox per physical core. The experiment's
 numbers already include this contention.
 
 ## How to read it
@@ -130,5 +130,7 @@ backend, and live in `results/bench/` on the machine that ran them:
 
 - `experiment-1-bwrap.jsonl` and `experiment-1-gvisor.jsonl`
 - `leak-bwrap.xml`, `leak-gvisor.xml`, `vora-leak-bwrap.log` and `vora-leak-gvisor.log`
+
+The limiter runs are in `results/limiter/`: `one-slot.txt`, `vmstat.txt`, `host.txt` and one raw file per run.
 
 To rebuild the summary from them, see [Rebuild the summary](experiment-1.md#rebuild-the-summary).
