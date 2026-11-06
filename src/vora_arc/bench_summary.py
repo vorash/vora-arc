@@ -9,12 +9,13 @@ from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
 
 from .client import PoolMode
 from .corpus import CandidateClass
-from .leak_report import PASSED, SuiteResult, read_leak_suites
+from .leak_report import FAILED, PASSED, SuiteResult, read_leak_suites
 from .model import Verdict
 from .report import DENIED_SYSCALLS_NOTE, NOT_MEASURED, blocked_net_note
 
@@ -235,6 +236,15 @@ class ArmSummary:
         return bool(self.infra_failed or self.off_shape_exceeded or self.wrong_reuse or self.broken)
 
 
+class Scope(StrEnum):
+    """Who disagrees. Only `SAFE_ARMS` says an arm that must be right is wrong."""
+
+    SAFE_ARMS = "arms that must agree"
+    NO_RESET = "no-reset only"
+    NO_RESET_UNCHECKED = "no-reset, with a safe arm's result missing"
+    """Cold and warm can't both vouch for the other result, so this may not be the no-reset arm's doing."""
+
+
 @dataclass(frozen=True)
 class Disagreement:
     seed: int
@@ -242,10 +252,14 @@ class Disagreement:
     candidate_class: str
     task: str
     program_sha256: str
-    only_no_reset: bool
-    """Cold and warm agree, and only the unsafe arm differs: a finding, not an error."""
+    scope: Scope
+    verdict_differs: bool
+    output_differs: bool
+    """Half the corpus is expected to fail, so a leak that changes a wrong answer shows only here."""
     verdicts: dict[str, dict[str, int]]
     """Arm to verdict to how many of that arm's sessions gave it."""
+    outputs: dict[str, tuple[str, ...]]
+    """Arm to the distinct output hashes its sessions gave."""
 
 
 @dataclass(frozen=True)
@@ -256,11 +270,11 @@ class VerdictComparison:
     corpus_sha256: str
     arms: tuple[str, ...]
     compared: int
+    """Candidates with a result from every arm that ran this corpus, at least two in all, and no failed run."""
     uncompared: int
-    """Candidates with a verdict from only one run, so nothing checked them."""
+    infra_failed: int
+    """Candidates with an infrastructure failure in some session, all among `uncompared`."""
     disagreements: tuple[Disagreement, ...]
-    output_differences: int
-    """Candidates that agree on the verdict but not on the outputs."""
 
 
 @dataclass(frozen=True)
@@ -384,12 +398,19 @@ class _Seen:
     task: str
     program_sha256: str
     verdicts: dict[str, Counter[str]] = field(default_factory=dict)
-    outputs: set[str] = field(default_factory=set)
-    runs: int = 0
+    outputs: dict[str, set[str]] = field(default_factory=dict)
+    results: int = 0
+    infra_failed: bool = False
+
+    def of_arms(self, arms: Iterable[str]) -> tuple[set[str], set[str]]:
+        chosen = list(arms)
+        verdicts = {verdict for arm in chosen for verdict in self.verdicts.get(arm, ())}
+        outputs = {digest for arm in chosen for digest in self.outputs.get(arm, ())}
+        return verdicts, outputs
 
 
 def compare_verdicts(sessions: Iterable[_ArmRows]) -> tuple[VerdictComparison, ...]:
-    """A run with no result has no verdict to compare: it is counted as an infrastructure failure instead."""
+    """A run with no result has nothing to compare: it is counted as an infrastructure failure instead."""
     groups: dict[tuple[str, str], list[_ArmRows]] = {}
     for session in sessions:
         groups.setdefault((session.header.corpus_sha256, session.header.tasks_sha256), []).append(session)
@@ -398,43 +419,63 @@ def compare_verdicts(sessions: Iterable[_ArmRows]) -> tuple[VerdictComparison, .
 
 def _compare_corpus(sessions: Sequence[_ArmRows]) -> VerdictComparison:
     seed = sessions[0].header.corpus_seed
+    arms = tuple(mode.value for mode in PoolMode if any(session.header.arm == mode for session in sessions))
     seen: dict[int, _Seen] = {}
     for session in sessions:
+        arm = session.header.arm
         for run in session.runs:
-            if run.phase != "measured" or run.verdict is None:
+            if run.phase != "measured":
                 continue
             item = seen.setdefault(run.index, _Seen(seed, run.candidate_class, run.task, run.program_sha256))
-            item.verdicts.setdefault(session.header.arm, Counter())[run.verdict] += 1
-            item.runs += 1
+            if run.verdict is None:
+                item.infra_failed = True
+                continue
+            item.verdicts.setdefault(arm, Counter())[run.verdict] += 1
+            item.results += 1
             if run.output_sha256 is not None:
-                item.outputs.add(run.output_sha256)
-    found = [(index, _disagreement(index, item)) for index, item in sorted(seen.items())]
-    disagreements = tuple(disagreement for _, disagreement in found if disagreement is not None)
-    agreed = [seen[index] for index, disagreement in found if disagreement is None]
+                item.outputs.setdefault(arm, set()).add(run.output_sha256)
+    compared = sum(_fully_compared(item, arms) for item in seen.values())
+    found = (_disagreement(index, item) for index, item in sorted(seen.items()))
     return VerdictComparison(
         seed=seed,
         corpus_sha256=sessions[0].header.corpus_sha256,
-        arms=tuple(mode.value for mode in PoolMode if any(session.header.arm == mode for session in sessions)),
-        compared=sum(item.runs > 1 for item in seen.values()),
-        uncompared=sum(item.runs == 1 for item in seen.values()),
-        disagreements=disagreements,
-        output_differences=sum(len(item.outputs) > 1 for item in agreed),
+        arms=arms,
+        compared=compared,
+        uncompared=len(seen) - compared,
+        infra_failed=sum(item.infra_failed for item in seen.values()),
+        disagreements=tuple(item for item in found if item is not None),
     )
 
 
+def _fully_compared(item: _Seen, arms: Sequence[str]) -> bool:
+    return item.results > 1 and not item.infra_failed and set(item.verdicts) == set(arms)
+
+
+_SAFE_ARMS = (PoolMode.COLD.value, PoolMode.WARM.value)
+
+
 def _disagreement(index: int, item: _Seen) -> Disagreement | None:
-    safe = {verdict for arm in (PoolMode.COLD, PoolMode.WARM) for verdict in item.verdicts.get(arm, ())}
-    unsafe = set(item.verdicts.get(PoolMode.WARM_NO_RESET, ()))
-    if len(safe | unsafe) < 2:
+    verdicts, outputs = item.of_arms(item.verdicts)
+    if len(verdicts) < 2 and len(outputs) < 2:
         return None
+    safe_verdicts, safe_outputs = item.of_arms(_SAFE_ARMS)
+    if len(safe_verdicts) > 1 or len(safe_outputs) > 1:
+        scope = Scope.SAFE_ARMS
+    elif all(arm in item.verdicts for arm in _SAFE_ARMS):
+        scope = Scope.NO_RESET
+    else:
+        scope = Scope.NO_RESET_UNCHECKED
     return Disagreement(
         seed=item.seed,
         index=index,
         candidate_class=item.candidate_class,
         task=item.task,
         program_sha256=item.program_sha256,
-        only_no_reset=len(safe) < 2,
+        scope=scope,
+        verdict_differs=len(verdicts) > 1,
+        output_differs=len(outputs) > 1,
         verdicts={arm: dict(counts) for arm, counts in item.verdicts.items()},
+        outputs={arm: tuple(sorted(digests)) for arm, digests in item.outputs.items()},
     )
 
 
@@ -555,46 +596,73 @@ def render_summary(raw: RawFile, leak_suites: Sequence[SuiteResult] | None = Non
     return "\n".join(lines) + "\n"
 
 
+def summary_exit_code(raw: RawFile, suites: Sequence[SuiteResult]) -> int:
+    """1 when these results can't be trusted. A no-reset finding or a partial summary is still a useful answer."""
+    safe_disagreement = any(item.scope is Scope.SAFE_ARMS for comparison in raw.comparisons for item in comparison.disagreements)
+    broken_arm = any(arm.broken for arm in raw.arms)
+    return 1 if safe_disagreement or broken_arm or any(suite.status == FAILED for suite in suites) else 0
+
+
 def _verdicts_section(raw: RawFile) -> list[str]:
     if not raw.arms:
         return []
     disagreements = [item for comparison in raw.comparisons for item in comparison.disagreements]
-    safe = [item for item in disagreements if not item.only_no_reset]
-    unsafe = [item for item in disagreements if item.only_no_reset]
+    safe = [item for item in disagreements if item.scope is Scope.SAFE_ARMS]
+    unsafe = [item for item in disagreements if item.scope is not Scope.SAFE_ARMS]
     compared = sum(comparison.compared for comparison in raw.comparisons)
-    lines = ["## Verdicts across arms", ""]
+    lines = ["## Verdicts and outputs across arms", ""]
     if safe:
         lines += [
-            f"**{len(safe)} candidates got different verdicts on arms that must agree. A program's verdict can't "
-            "depend on how its sandbox started, so an arm is wrong. Don't quote these results until this is explained.**",
+            f"**{len(safe)} candidates differ on arms that must agree, in their verdict or their outputs. A program's "
+            "result can't depend on how its sandbox started, so an arm is wrong. Don't quote these results until this "
+            "is explained.**",
             "",
         ]
     if unsafe:
         lines += [
-            f"**{len(unsafe)} candidates got a different verdict only on the unsafe no-reset arm. This is a finding, "
-            "not an error: state from an earlier run may have reached them.**",
+            f"**{len(unsafe)} candidates differ only where the unsafe no-reset arm is involved, in their verdict or their "
+            "outputs. This is a finding, not an error: state from an earlier run may have reached them.**",
             "",
         ]
     lines += [f"**{_hand_written_warning(arm)}**\n" for arm in raw.arms if arm.hand_written_not_passed]
     if not disagreements:
-        lines += [f"The {compared} candidates compared got the same verdict in every session that ran them.", ""]
+        lines += [f"The {compared} candidates compared got the same verdict and outputs in every session that ran them.", ""]
     for comparison in raw.comparisons:
         lines += _comparison_notes(comparison)
-    if disagreements:
-        columns = [mode.value for mode in PoolMode]
-        lines += [
-            "",
-            f"| Seed | Candidate | Class | Task | Program | Differs on | {' | '.join(columns)} |",
-            f"|---|---|---|---|---|---|{'---|' * len(columns)}",
-        ]
-        lines += [
-            f"| {item.seed} | {item.index} | {item.candidate_class} | {item.task} | {item.program_sha256[:12]} "
-            f"| {'no-reset only' if item.only_no_reset else 'arms that must agree'} | "
-            + " | ".join(_verdict_counts(item.verdicts.get(column)) for column in columns)
-            + " |"
-            for item in disagreements
-        ]
+    if safe:
+        lines += ["", "On arms that must agree:", "", *_disagreement_table(safe)]
+    if unsafe:
+        lines += ["", "With the no-reset arm:", "", *_disagreement_table(unsafe)]
     return [*lines, ""]
+
+
+def _disagreement_table(items: Sequence[Disagreement]) -> list[str]:
+    columns = [mode.value for mode in PoolMode]
+    lines = [
+        f"| Seed | Candidate | Class | Task | Program | Differs on | Differs in | {' | '.join(columns)} |",
+        f"|---|---|---|---|---|---|---|{'---|' * len(columns)}",
+    ]
+    lines += [
+        f"| {item.seed} | {item.index} | {item.candidate_class} | {item.task} | {item.program_sha256[:12]} "
+        f"| {item.scope.value} | {_differs_in(item)} | "
+        + " | ".join(_arm_result(item, column) for column in columns)
+        + " |"
+        for item in items
+    ]
+    return lines
+
+
+def _differs_in(item: Disagreement) -> str:
+    parts = [name for name, differs in (("verdict", item.verdict_differs), ("outputs", item.output_differs)) if differs]
+    return " and ".join(parts)
+
+
+def _arm_result(item: Disagreement, arm: str) -> str:
+    counts = item.verdicts.get(arm)
+    if not counts:
+        return "no verdict"
+    verdicts = ", ".join(f"{verdict} x{count}" for verdict, count in sorted(counts.items()))
+    return f"{verdicts}; outputs {', '.join(digest[:8] for digest in item.outputs.get(arm, ()))}"
 
 
 def _comparison_notes(comparison: VerdictComparison) -> list[str]:
@@ -602,18 +670,11 @@ def _comparison_notes(comparison: VerdictComparison) -> list[str]:
     if len(comparison.arms) < len(PoolMode):
         notes.append(f"Corpus seed {comparison.seed} ran only on {', '.join(comparison.arms)}.")
     if comparison.uncompared:
-        notes.append(f"Corpus seed {comparison.seed}: {comparison.uncompared} candidates have one verdict, so nothing checked them.")
-    if comparison.output_differences:
         notes.append(
-            f"Corpus seed {comparison.seed}: {comparison.output_differences} candidates agree on the verdict but not on their outputs."
+            f"Corpus seed {comparison.seed}: {comparison.uncompared} candidates aren't compared, because a run has no result "
+            f"or an arm has no verdict for them, {comparison.infra_failed} of them with an infrastructure failure."
         )
     return notes
-
-
-def _verdict_counts(counts: dict[str, int] | None) -> str:
-    if not counts:
-        return "no verdict"
-    return ", ".join(f"{verdict} x{count}" for verdict, count in sorted(counts.items()))
 
 
 def latest_session_by_backend(raw: RawFile) -> dict[str, datetime]:

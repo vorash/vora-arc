@@ -166,11 +166,18 @@ A fast failure would flatter an arm, so two checks protect the verdicts:
 - A hand-written solution that doesn't pass is flagged on that arm alone, with no other arm to compare
   against. These programs are known good, so on `cold` or `warm` the arm is broken and the command
   exits 1. On `warm-no-reset` it is a finding, because a leak can cause it, and the command exits 0.
-- The summary compares verdicts by candidate index across every session of the same corpus, and lists
-  every disagreement at the top. A disagreement involving `cold` or `warm` means an arm is wrong. A
-  disagreement only on `warm-no-reset` is a finding, not an error. A run with no result has no verdict,
-  so it can't disagree. It shows as an infrastructure failure, and the candidate is counted as checked
-  only if at least two runs gave it a verdict.
+- The summary compares verdicts and a hash of the outputs by candidate index, across every session of
+  the same corpus, and lists every difference at the top. The outputs matter because half the corpus is
+  expected to fail: a leak that changes a wrong answer leaves its verdict at `failed`. A difference
+  between `cold` and `warm` means an arm is wrong. A difference only with `warm-no-reset` is a finding,
+  not an error, and the table says when `cold` or `warm` has no result to check it against. A run with
+  no result has nothing to compare. It shows as an infrastructure failure, and its candidate isn't
+  compared. A candidate is compared only with a result from every arm that ran its corpus.
+
+`bench-summary` exits 1 on a difference between safe arms, in verdict or outputs, on a hand-written
+solution that doesn't pass on `cold` or `warm`, or on a `FAILED` leak suite. It exits 0 otherwise. That
+includes a finding on `warm-no-reset`, and an `incomplete`, `stale` or `not run` leak suite, which it
+prints loudly, because a partial summary is still useful.
 
 ## Run the arms in turn
 
@@ -273,7 +280,8 @@ uv run vora-arc bench-summary results/bench/experiment-1-bwrap.jsonl \
 
 The summary reads only the files you give it, and it takes several raw files. It shows, in order:
 
-1. Verdict disagreements and hand-written solutions that didn't pass.
+1. Candidates that differ in verdict or outputs, safe arms apart from no-reset, and hand-written
+   solutions that didn't pass.
 2. Each arm's median and range across sessions, and the order the sessions ran in.
 3. The leak table, with each report's date and the Vora build its log names.
 4. Each session: programs per second, p50, p90, p99, max and count for each time, then the same for
@@ -336,7 +344,7 @@ matching the other arms' doesn't make it safe: nothing in the corpus tries to le
 | Question | What `bench` does | What is left to you |
 |---|---|---|
 | Did it error? | Counts every refusal, broken stream and bad exit as an infrastructure failure, by cause. Retries nothing | Read the counts |
-| Did it even happen? | Runs `verify` on each result and records a digest of its outputs. Compares verdicts and digests across arms by candidate index, and flags a hand-written solution that doesn't pass | Expect no disagreements |
+| Did it even happen? | Runs `verify` on each result and records a hash of its outputs. Compares verdicts and hashes across arms by candidate index, and flags a hand-written solution that doesn't pass | Expect no differences |
 | Does it reproduce? | Shows each arm's median and range across sessions, and says when there are fewer than 5. Each session in the loop above has its own seed, so that range includes differences between corpora with the same mix | Run the loop above. A gap inside the range is no measurable difference |
 | Was it tuned? | Uses the profile's limits on every arm. `borrow_timeout_ms` is 60 s, where `solve --pool` keeps Vora's default of 2 s | Use a host like the one you care about |
 | Why not double? | Records load, CPU count and client CPU | Find the limiter with a profiler |

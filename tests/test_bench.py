@@ -15,10 +15,10 @@ import pytest
 from fake_pools import ADMIN_KEY, TENANT_KEY, FakePools, Frame, Frames, Refuse, Script, stdout_frame
 
 from vora_arc import bench, cli
-from vora_arc.bench_summary import UNSAFE_LABEL, load_raw, percentiles, render_summary
+from vora_arc.bench_summary import UNSAFE_LABEL, Scope, load_raw, percentiles, render_summary, summary_exit_code
 from vora_arc.client import PoolMode
 from vora_arc.corpus import CandidateClass, build_corpus, composition, load_solutions
-from vora_arc.leak_report import WRITER_CASES
+from vora_arc.leak_report import WRITER_CASES, LeakReport, read_leak_suites
 
 REVERSE = "def transform(grid):\n    return [row[::-1] for row in grid]\n"
 REVERSE_AGAIN = "def transform(grid):\n    return [list(reversed(row)) for row in grid]\n"
@@ -383,14 +383,14 @@ def test_a_verdict_that_differs_between_cold_and_warm_is_reported_prominently(
     raw = load_raw(bencher.raw)
     (comparison,) = raw.comparisons
     (disagreement,) = comparison.disagreements
-    assert not disagreement.only_no_reset
+    assert disagreement.scope is Scope.SAFE_ARMS
     assert disagreement.verdicts == {"cold": {"passed": 1}, "warm": {"crashed": 1}}
     assert disagreement.program_sha256 == next(
         run["program_sha256"] for run in bencher.rows("run") if run["index"] == disagreement.index and run["phase"] == "measured"
     )
     text = render_summary(raw)
     head = text[: text.index("| Arm | Sessions")]
-    assert "**1 candidates got different verdicts on arms that must agree." in head, "before any latency"
+    assert "**1 candidates differ on arms that must agree, in their verdict or their outputs." in head, "before any latency"
     assert f"| {disagreement.index} | mutated |" in head
     assert "passed x1" in head and "crashed x1" in head
 
@@ -402,9 +402,9 @@ def test_verdicts_are_compared_across_raw_files(bencher: Bench, capsys: pytest.C
     assert bencher.run("warm", "--candidates", "40", "--raw", str(bencher.root / "warm.jsonl")) == 0
     capsys.readouterr()
 
-    assert cli.main(["bench-summary", str(bencher.root / "cold.jsonl"), str(bencher.root / "warm.jsonl")]) == 0
+    assert cli.main(["bench-summary", str(bencher.root / "cold.jsonl"), str(bencher.root / "warm.jsonl")]) == 1
 
-    assert "**1 candidates got different verdicts on arms that must agree." in capsys.readouterr().out
+    assert "**1 candidates differ on arms that must agree" in capsys.readouterr().out
 
 
 def test_a_verdict_that_differs_only_on_the_no_reset_arm_is_a_finding_not_an_error(
@@ -419,10 +419,118 @@ def test_a_verdict_that_differs_only_on_the_no_reset_arm_is_a_finding_not_an_err
     raw = load_raw(bencher.raw)
     (comparison,) = raw.comparisons
     (disagreement,) = comparison.disagreements
-    assert disagreement.only_no_reset
+    assert disagreement.scope is Scope.NO_RESET
     text = render_summary(raw)
-    assert "only on the unsafe no-reset arm. This is a finding" in text
+    assert "differ only where the unsafe no-reset arm is involved" in text and "This is a finding" in text
     assert "arms that must agree" not in text
+    assert summary_exit_code(raw, []) == 0, "a finding about the unsafe arm doesn't fail the summary"
+
+
+def wrong_but_different(program: str, arm: str) -> Any:
+    """On this arm the program still fails verification, with a different wrong answer."""
+    other_wrong = stdout_frame(
+        {"index": 0, "status": "OK", "output": [[7, 7]], "error": None, "wall_ms": 1},
+        {"index": 1, "status": "OK", "output": [[7, 7]], "error": None, "wall_ms": 1},
+        {"index": 2, "status": "OK", "output": [[7, 7]], "error": None, "wall_ms": 1},
+        {"done": True, "stderr_tail": ""},
+    )
+
+    def script(pool: str, seen: str) -> Script | None:
+        if seen != program:
+            return None
+        output = other_wrong if pool.startswith(f"vora-arc-bench-{arm}-") else WRONG
+        reuse = {"reuse": "POOL_REUSE_UNSAFE_NO_RESET"} if "no-reset" in pool else {}
+        return Frames(({"run": {"warm": "cold" not in pool} | reuse}, output, {"exit": {"reason": "EXITED"}}, {"runDone": {}}))
+
+    return script
+
+
+def test_a_wrong_answer_that_changes_between_safe_arms_fails_the_summary_though_both_say_failed(
+    bencher: Bench, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Half the corpus is expected to fail, so a leak that changes a wrong answer never shows in a verdict.
+    bencher.fake.script_for = wrong_but_different(a_mutant(bencher), "warm")
+    assert bencher.run("cold", "--candidates", "40") == 0
+    assert bencher.run("warm", "--candidates", "40") == 0
+    capsys.readouterr()
+
+    assert cli.main(["bench-summary", str(bencher.raw)]) == 1
+
+    (comparison,) = load_raw(bencher.raw).comparisons
+    (item,) = comparison.disagreements
+    assert (item.scope, item.verdict_differs, item.output_differs) == (Scope.SAFE_ARMS, False, True)
+    assert item.verdicts == {"cold": {"failed": 1}, "warm": {"failed": 1}}
+    assert item.outputs["cold"] != item.outputs["warm"]
+    printed = capsys.readouterr().out
+    head = printed[: printed.index("| Arm | Sessions")]
+    assert "**1 candidates differ on arms that must agree" in head, "before any latency"
+    assert f"| {item.index} | mutated |" in head
+    assert "| outputs |" in head
+
+
+def test_a_wrong_answer_that_changes_only_on_no_reset_is_a_finding_and_exits_0(
+    bencher: Bench, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    use_admin(monkeypatch)
+    bencher.fake.script_for = wrong_but_different(a_mutant(bencher), "warm-no-reset")
+    for mode in PoolMode:
+        assert bencher.run(mode.value, "--candidates", "40") == 0
+    capsys.readouterr()
+
+    assert cli.main(["bench-summary", str(bencher.raw)]) == 0
+
+    (comparison,) = load_raw(bencher.raw).comparisons
+    (item,) = comparison.disagreements
+    assert (item.scope, item.verdict_differs, item.output_differs) == (Scope.NO_RESET, False, True)
+    assert "With the no-reset arm:" in capsys.readouterr().out
+
+
+def test_no_reset_differing_from_cold_with_warm_missing_does_not_claim_the_safe_arms_agree(
+    bencher: Bench, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    use_admin(monkeypatch)
+    bencher.fake.script_for = only_on_arm("warm-no-reset", a_mutant(bencher), all_inputs("ERROR"))
+    assert bencher.run("cold", "--candidates", "40") == 0
+    assert bencher.run("warm-no-reset", "--candidates", "40") == 0
+
+    raw = load_raw(bencher.raw)
+    (comparison,) = raw.comparisons
+    (item,) = comparison.disagreements
+
+    assert item.scope is Scope.NO_RESET_UNCHECKED
+    assert summary_exit_code(raw, []) == 0
+    assert "no-reset, with a safe arm's result missing" in render_summary(raw)
+
+
+def test_a_hand_written_failure_on_a_safe_arm_fails_the_summary_and_on_no_reset_does_not(
+    bencher: Bench, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    use_admin(monkeypatch)
+    bencher.fake.script_for = lambda pool, program: answers(all_inputs("ERROR"), warm=False)
+    assert bencher.run("cold", "--warmup", "0") == 1
+    assert summary_exit_code(load_raw(bencher.raw), []) == 1
+
+    other = bencher.root / "no-reset.jsonl"
+    unsafe = {"run": {"warm": True, "reuse": "POOL_REUSE_UNSAFE_NO_RESET"}}
+    bencher.fake.script_for = lambda pool, program: Frames((unsafe, WRONG, {"exit": {"reason": "EXITED"}}, {"runDone": {}}))
+    assert bencher.run("warm-no-reset", "--warmup", "0", "--raw", str(other)) == 0
+    assert summary_exit_code(load_raw(other), []) == 0
+
+
+def test_a_summary_exits_0_on_incomplete_or_not_run_leak_suites_and_1_on_a_failed_one(bencher: Bench) -> None:
+    assert bencher.run("warm") == 0
+    raw = load_raw(bencher.raw)
+    report = bencher.root / "vora.log"
+
+    assert summary_exit_code(raw, read_leak_suites()) == 0, "not run, and printed loudly"
+
+    report.write_text("--- PASS: TestLeakMatrixGvisor (1.00s)\nPASS\nok  \tvora\t1.0s\n")
+    suites = read_leak_suites(vora_reports=[LeakReport("gvisor", report)])
+    assert any(suite.status.startswith("incomplete") for suite in suites)
+    assert summary_exit_code(raw, suites) == 0, "a partial summary is still useful"
+
+    report.write_text("--- FAIL: TestLeakMatrixGvisor (1.00s)\nFAIL\n")
+    assert summary_exit_code(raw, read_leak_suites(vora_reports=[LeakReport("gvisor", report)])) == 1
 
 
 def test_arms_that_agree_say_how_many_candidates_they_compared(bencher: Bench) -> None:
@@ -431,7 +539,7 @@ def test_arms_that_agree_say_how_many_candidates_they_compared(bencher: Bench) -
 
     text = render_summary(load_raw(bencher.raw))
 
-    assert f"The {CANDIDATES} candidates compared got the same verdict" in text
+    assert f"The {CANDIDATES} candidates compared got the same verdict and outputs" in text
     assert "Corpus seed 1 ran only on cold, warm." in text
 
 
@@ -441,7 +549,7 @@ def test_one_arm_alone_has_nothing_to_compare_and_says_so(bencher: Bench) -> Non
     text = render_summary(load_raw(bencher.raw))
 
     assert "The 0 candidates compared" in text
-    assert f"{CANDIDATES} candidates have one verdict, so nothing checked them." in text
+    assert f"Corpus seed 1: {CANDIDATES} candidates aren't compared" in text
 
 
 def test_a_refused_run_on_one_arm_is_not_a_disagreement(bencher: Bench) -> None:
@@ -452,7 +560,18 @@ def test_a_refused_run_on_one_arm_is_not_a_disagreement(bencher: Bench) -> None:
     (comparison,) = load_raw(bencher.raw).comparisons
 
     assert comparison.disagreements == ()
-    assert (comparison.compared, comparison.uncompared) == (CANDIDATES - 1, 1)
+    assert (comparison.compared, comparison.uncompared, comparison.infra_failed) == (CANDIDATES - 1, 1, 1)
+
+
+def test_a_candidate_with_a_failure_on_one_arm_is_not_compared_however_many_runs_it_has(bencher: Bench) -> None:
+    for _ in range(2):
+        assert bencher.run("cold", "--concurrency", "1") == 0
+    bencher.fake.runs.extend([answers(RIGHT), answers(RIGHT), Refuse(429, "pool full")])
+    assert bencher.run("warm", "--concurrency", "1") == 1
+
+    (comparison,) = load_raw(bencher.raw).comparisons
+
+    assert (comparison.compared, comparison.uncompared, comparison.infra_failed) == (CANDIDATES - 1, 1, 1)
 
 
 def test_programs_per_second_comes_from_the_measured_window_and_leaves_warmup_out(bencher: Bench) -> None:
@@ -837,7 +956,7 @@ def test_leak_results_come_from_the_reports_given_to_the_summary(bencher: Bench,
     vora_report.write_text("--- FAIL: TestLeakMatrixGvisor (1.00s)\n")
 
     args = ["bench-summary", str(bencher.raw), "--leak-pytest", f"gvisor={pytest_report}", "--leak-vora", f"gvisor={vora_report}"]
-    assert cli.main(args) == 0
+    assert cli.main(args) == 1, "a failed leak suite"
 
     printed = capsys.readouterr().out
     assert f"| gvisor | passed | 3 | 0 | 0 | {pytest_report}, written " in printed

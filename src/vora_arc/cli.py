@@ -13,7 +13,7 @@ from pathlib import Path
 import httpx
 
 from .bench import BenchSettings, run_bench
-from .bench_summary import latest_session_by_backend, load_raw, render_summary
+from .bench_summary import latest_session_by_backend, load_raw, render_summary, summary_exit_code
 from .client import PoolMode, connect, open_pool
 from .corpus import build_corpus, load_solutions, warmup_candidates
 from .generate import REQUEST_TIMEOUT_S, ModelConfig, ModelError, sample
@@ -171,7 +171,7 @@ async def bench_summary(args: argparse.Namespace) -> int:
     raw = load_raw(*args.raw)
     suites = read_leak_suites(args.leak_pytest, args.leak_vora, latest_session_by_backend(raw))
     print(render_summary(raw, suites), end="")
-    return 0
+    return summary_exit_code(raw, suites)
 
 
 def _leak_report(text: str) -> LeakReport:
