@@ -963,7 +963,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "matplotlib", specifier = ">=3.9" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
-    { name = "vorash", git = "ssh://git@github-vorash/vorash/vora.git?subdirectory=sdk%2Fpython&rev=18b2481769116729d6e7c5cec3adf79249fa3ba0" },
+    { name = "vorash", git = "ssh://git@github-vorash/vorash/vora.git?subdirectory=sdk%2Fpython&rev=0cca62dc17515caf60fdfee010298f90dc078801" },
 ]
 
 [package.metadata.requires-dev]
@@ -977,8 +977,8 @@ dev = [
 
 [[package]]
 name = "vorash"
-version = "0.6.0"
-source = { git = "ssh://git@github-vorash/vorash/vora.git?subdirectory=sdk%2Fpython&rev=18b2481769116729d6e7c5cec3adf79249fa3ba0#18b2481769116729d6e7c5cec3adf79249fa3ba0" }
+version = "0.8.0"
+source = { git = "ssh://git@github-vorash/vorash/vora.git?subdirectory=sdk%2Fpython&rev=0cca62dc17515caf60fdfee010298f90dc078801#0cca62dc17515caf60fdfee010298f90dc078801" }
 dependencies = [
     { name = "httpx" },
 ]

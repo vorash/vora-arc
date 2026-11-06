@@ -198,6 +198,29 @@ def test_time_split_sums_what_was_logged() -> None:
     assert split["reset"] is None
 
 
+def test_a_run_with_no_warm_start_says_every_sandbox_was_fresh() -> None:
+    data = run_data(runs=(RunRow(100, 50, False, None), RunRow(120, 60, False, None)))
+    reset = time_split(data)[-1]
+    assert reset.seconds is None
+    assert reset.note == "every run used a fresh sandbox"
+
+
+def test_a_run_mixing_warm_and_cold_says_so_with_its_counts() -> None:
+    data = run_data(runs=(RunRow(100, 50, False, None), RunRow(1, 60, True, 3), RunRow(1, 60, True, None)))
+    reset = time_split(data)[-1]
+    assert reset.seconds == pytest.approx(0.003), "only what was reported is summed"
+    assert "the rest a fresh one" in reset.note and "every run" not in reset.note
+    assert "2 of 3 runs used a pool's running sandbox" in reset.note
+    assert "1 of 3 reported a reset" in reset.note
+
+
+def test_a_report_never_shows_a_count_for_denied_syscalls_or_blocked_network() -> None:
+    text = render_markdown(run_data(), None, {})
+    assert f"- Denied syscalls: {NOT_MEASURED}." in text
+    assert f"- Blocked network attempts: {NOT_MEASURED}." in text
+    assert "floor" in text and "restricted" in text
+
+
 def test_a_cached_run_reports_no_generation_rather_than_zero() -> None:
     data = run_data(phases=(phase("arc1/a", None, 0, 32), phase("arc1/b", None, 0, 32)))
     generation = time_split(data)[0]

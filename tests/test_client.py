@@ -408,3 +408,45 @@ async def test_client_reads_what_the_real_runner_writes() -> None:
         (2, True, GridStatus.OK, ((6, 5),)),
     ]
     assert "hello from the program" in result.stderr_tail
+
+
+@pytest.mark.parametrize("status", [429, 503])
+async def test_a_create_refused_for_now_is_tried_again(status: int) -> None:
+    fake = FakeVora()
+    refused = [status]
+
+    def route(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path == "/v1/sandboxes" and refused:
+            refused.pop()
+            return httpx.Response(status, json={"error": "try later"})
+        return fake.route(request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(route)) as http:
+        vora = Vora(base_url="http://vora.test", api_key="vora_test", client=http)
+        result = await run_batch(vora, PROFILE, PROGRAM, TASK, correlation_id="t1/c1")
+
+    assert result.run_status is RunStatus.COMPLETED
+
+
+async def test_a_conflict_on_create_is_not_tried_again() -> None:
+    fake = FakeVora()
+
+    def route(request: httpx.Request) -> httpx.Response:
+        fake.calls.append(("create", ""))
+        return httpx.Response(409, json={"error": "no"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(route)) as http:
+        vora = Vora(base_url="http://vora.test", api_key="vora_test", client=http)
+        with pytest.raises(VoraError):
+            await run_batch(vora, PROFILE, PROGRAM, TASK, correlation_id="t1/c1")
+
+    assert fake.count("create") == 1
+
+
+async def test_a_fresh_sandbox_is_never_warm_and_has_no_reset() -> None:
+    result = await run(FakeVora())
+
+    assert result.warm_start is False
+    assert result.reset_ms is None
+    assert result.prepared_reset_ms is None
+    assert result.audit_log_id is None
