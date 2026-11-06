@@ -6,6 +6,7 @@ tests/test_store.py covers the same interface on PostgreSQL.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Iterator
 
 import httpx
@@ -188,6 +189,27 @@ async def test_large_counts_are_split_into_requests_and_cached_as_they_arrive(
     await sample(http, config(fake), cache, "t1", "p", 40)
     assert [request["n"] for request in fake.requests] == [16, 16, 8]
     assert len(cache.rows) == 40
+
+
+async def test_requests_overlap_up_to_a_gate_that_tasks_share(fake: FakeModel, http: httpx.AsyncClient) -> None:
+    fake.delay_s = 0.2
+    gate = asyncio.Semaphore(3)
+    first, _ = await asyncio.gather(
+        sample(http, config(fake), DictCache(), "t1", "p", 64, gate=gate),
+        sample(http, config(fake), DictCache(), "t2", "p", 64, gate=gate),
+    )
+    assert len(fake.requests) == 8
+    assert fake.peak_open_requests == 3, "both tasks wait on the one gate"
+    assert first.request_ms is not None
+    assert first.request_ms < 4 * 200, "time with a request open isn't the sum over overlapping requests"
+
+
+async def test_a_refused_request_keeps_what_the_others_returned(fake: FakeModel, http: httpx.AsyncClient) -> None:
+    fake.faults.append((400, '{"error": "refused"}'))
+    cache = DictCache()
+    with pytest.raises(ModelError, match="HTTP 400"):
+        await sample(http, config(fake), cache, "t1", "p", 64)
+    assert len(cache.rows) == 48
 
 
 @pytest.mark.parametrize("fault", [500, 503, 429, "drop", "garbage"])

@@ -93,6 +93,7 @@ async def schedule(
     *,
     max_concurrency: int,
     pool: Pool | None = None,
+    gate: asyncio.Semaphore | None = None,
 ) -> dict[str, ProgramResult]:
     """Judge each distinct program once, at most `max_concurrency` at a time, keyed by SHA-256.
 
@@ -100,11 +101,11 @@ async def schedule(
     Any other exception is a bug: it cancels the other jobs, and their sandboxes are
     destroyed before it reaches the caller, who may close the client next.
     """
-    gate = asyncio.Semaphore(max_concurrency)
+    slots = gate or asyncio.Semaphore(max_concurrency)
 
     async def job(sha256: str, program: str) -> ProgramResult:
         queued = time.perf_counter()
-        async with gate:
+        async with slots:
             queue_ms = round(_since_ms(queued))
             result: Judgement | InfraFailure
             try:

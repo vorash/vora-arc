@@ -1,7 +1,12 @@
 # Model pipeline
 
-`solve` handles one task at a time. Sandbox jobs for a task run concurrently under
-`VORA_MAX_CONCURRENCY`, so the cap also holds for the whole run.
+`solve` handles one task at a time unless `--tasks-at-once` says otherwise. Sandbox jobs
+run concurrently under `VORA_MAX_CONCURRENCY`, and tasks share that cap, so it holds for
+the whole run. They also share a limit of 8 open model requests.
+
+Use `--tasks-at-once` on a real model. A request lasts as long as its longest sample, so
+a runaway sample at the 4096-token limit would otherwise keep the GPU almost idle for
+minutes, with every later task waiting behind it.
 
 | Module | Job |
 |---|---|

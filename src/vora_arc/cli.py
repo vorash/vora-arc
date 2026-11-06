@@ -16,7 +16,7 @@ from .bench import BenchSettings, run_bench
 from .bench_summary import latest_session_by_backend, load_raw, render_summary, summary_exit_code
 from .client import PoolMode, connect, open_pool
 from .corpus import build_corpus, load_solutions, warmup_candidates
-from .generate import REQUEST_TIMEOUT_S, ModelConfig, ModelError, sample
+from .generate import MAX_OPEN_REQUESTS, REQUEST_TIMEOUT_S, ModelConfig, ModelError, sample
 from .leak_report import BACKENDS, LeakReport, read_leak_suites
 from .model import BatchResult, Verdict
 from .pipeline import solve_task
@@ -98,6 +98,7 @@ async def solve(args: argparse.Namespace) -> int:
         profile.name,
         profile.backend,
         max_concurrency,
+        args.tasks_at_once,
     )
     async with (
         open_store(url) as store,
@@ -113,20 +114,39 @@ async def solve(args: argparse.Namespace) -> int:
         solved = infra_errors = 0
         try:
             print(f"run {run_id}: {len(tasks)} tasks, {args.samples} samples each, model {model.model}", flush=True)
-            for task in tasks:
-                key = task_key(args.dataset, task)
-                await store.register_task(key, args.dataset, args.split)
-                result = await solve_task(
-                    task,
-                    sampler=partial(sample, http, model, store, key),
-                    scheduler=partial(schedule, vora, profile, max_concurrency=max_concurrency, pool=pool),
-                    samples=args.samples,
-                    refine=args.refine,
-                )
-                await store.save_task_result(run_id, key, result)
-                solved += result.solved
-                infra_errors += result.infra_errors
-                print(f"{task.id}: {'solved' if result.solved else 'unsolved'}, {len(result.candidates)} candidates", flush=True)
+            remaining = iter(tasks)
+            model_gate = asyncio.Semaphore(MAX_OPEN_REQUESTS)
+            sandbox_gate = asyncio.Semaphore(max_concurrency)
+
+            async def worker() -> None:
+                nonlocal solved, infra_errors
+                # A task's save holds a transaction open, so workers can't share a connection.
+                async with open_store(url) as task_store:
+                    for task in remaining:
+                        key = task_key(args.dataset, task)
+                        await task_store.register_task(key, args.dataset, args.split)
+                        result = await solve_task(
+                            task,
+                            sampler=partial(sample, http, model, task_store, key, gate=model_gate),
+                            scheduler=partial(
+                                schedule, vora, profile, max_concurrency=max_concurrency, pool=pool, gate=sandbox_gate
+                            ),
+                            samples=args.samples,
+                            refine=args.refine,
+                        )
+                        await task_store.save_task_result(run_id, key, result)
+                        solved += result.solved
+                        infra_errors += result.infra_errors
+                        print(f"{task.id}: {'solved' if result.solved else 'unsolved'}, {len(result.candidates)} candidates", flush=True)
+
+            workers = [asyncio.create_task(worker()) for _ in range(args.tasks_at_once)]
+            try:
+                await asyncio.gather(*workers)
+            except BaseException:
+                for running in workers:
+                    running.cancel()
+                await asyncio.gather(*workers, return_exceptions=True)
+                raise
             await store.finish_run(run_id)
         except Exception as error:
             await store.finish_run(run_id, f"{type(error).__name__}: {error}")
@@ -198,6 +218,9 @@ def main(argv: list[str] | None = None) -> int:
     solver.add_argument("--refine", action="store_true", help="give a task with no passed candidate a second round")
     solver.add_argument("--data-dir", default=DEFAULT_DATA_DIR, type=Path)
     solver.add_argument("--profile", type=Path, help="profile TOML (default: $VORA_ARC_PROFILE, then profiles/python-arc.toml)")
+    solver.add_argument(
+        "--tasks-at-once", type=_positive_int, default=1, help="tasks to solve at once, sharing the model and sandbox limits"
+    )
     solver.add_argument("--pool", action="store_true", help="run programs on a warm pool instead of a fresh sandbox each")
     bencher = commands.add_parser("bench", help="run one arm of experiment 1 and append it to a raw file")
     bencher.add_argument("--mode", required=True, choices=[mode.value for mode in PoolMode])

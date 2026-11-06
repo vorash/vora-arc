@@ -81,6 +81,17 @@ async def test_the_cap_limits_jobs_running_at_once(runs: FakeRuns, cap: int) -> 
     assert runs.peak == cap, "more would overload the host, fewer would waste it"
 
 
+async def test_a_shared_gate_holds_the_cap_across_tasks(runs: FakeRuns) -> None:
+    gate = asyncio.Semaphore(2)
+    await asyncio.gather(
+        *(
+            schedule.schedule(None, None, TASK, [f"{task}-{i}" for i in range(6)], max_concurrency=8, gate=gate)  # type: ignore[arg-type]
+            for task in ("a", "b")
+        )
+    )
+    assert runs.peak == 2, "tasks solved at once share one host"
+
+
 async def test_waiting_for_a_slot_is_measured(runs: FakeRuns) -> None:
     results = await run([f"p{i}" for i in range(4)], cap=1)
     queue = sorted(r.queue_ms for r in results.values())

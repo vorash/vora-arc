@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from collections import Counter, deque
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -39,6 +40,9 @@ class FakeModel:
         self.requests: list[dict[str, Any]] = []
         self.faults: deque[int | str | tuple[int, str]] = deque()
         self.max_choices_per_response: int | None = None
+        self.delay_s = 0.0
+        self.peak_open_requests = 0
+        self._open_requests = 0
         self._served: Counter[str] = Counter()
         self._lock = threading.Lock()
 
@@ -83,6 +87,11 @@ class FakeModel:
                 with fake._lock:
                     fake.requests.append({"path": self.path, "authorization": self.headers.get("Authorization"), **body})
                     fault = fake.faults.popleft() if fake.faults else None
+                    fake._open_requests += 1
+                    fake.peak_open_requests = max(fake.peak_open_requests, fake._open_requests)
+                time.sleep(fake.delay_s)
+                with fake._lock:
+                    fake._open_requests -= 1
                 if fault == "drop":
                     self.connection.close()
                 elif fault == "garbage":
