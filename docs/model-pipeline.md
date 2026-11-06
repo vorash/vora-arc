@@ -6,7 +6,7 @@
 | Module | Job |
 |---|---|
 | `generate` | Build the prompt, sample completions through the cache, extract programs |
-| `schedule` | Run a task's distinct programs (asyncio now; Ray would replace this one module) |
+| `schedule` | Run a task's distinct programs (asyncio now; Ray would replace this one module), on a fresh sandbox or a pool |
 | `verify` | Judge one run (from Milestone 1, unchanged) |
 | `vote` | Choose up to two answers |
 | `refine` | Build the second-round prompt |
@@ -100,9 +100,10 @@ Run it with `uv run pytest -m sandbox`.
 - Any accuracy, generation time or cost figure.
 - The request shape on vLLM itself: `/chat/completions` with `n` up to 16.
 
-## Not verified until warm pools exist
+## Not verified on a real pool yet
 
-- `runs.warm_start` is always false, and `reset_ms` and `audit_log_id` are NULL. The
-  current client can't see an execution id, and a fresh sandbox has no reset.
-- The dashboard's Pool state panels use the design's `vora_pool_*` names. Vora doesn't
-  export them yet, so these panels stay empty.
+`solve --pool` and `vora-arc bench` have run only against a fake of Vora's pool routes
+(`tests/fake_pools.py`). See [About warm pools](pools.md) and
+[How to run experiment 1](experiment-1.md). The dashboard's pool panels use the names in
+Vora's `internal/telemetry/metrics.go`, and `tests/test_dashboard.py` checks them against
+that file, but no panel has shown real data yet.

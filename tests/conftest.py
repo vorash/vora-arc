@@ -12,6 +12,7 @@ from pathlib import Path
 
 import psycopg
 import pytest
+from host_safety import host_safety_failures, programs_for_the_host
 
 
 @dataclass(frozen=True)
@@ -78,3 +79,10 @@ def database_url(postgres: Postgres, request: pytest.FixtureRequest) -> str:
     with psycopg.connect(postgres.url("postgres"), autocommit=True) as connection:
         connection.execute(f'CREATE DATABASE "{name}"'.encode())
     return postgres.url(name)
+
+
+@pytest.fixture(scope="session")
+def host_safe_programs() -> None:
+    """Runs before any test that runs a program on the host, whatever order pytest picks. If it fails, they error unrun."""
+    failures = host_safety_failures(programs_for_the_host())
+    assert not failures, f"{len(failures)} programs must not run on the host, for example {next(iter(failures.items()))}"

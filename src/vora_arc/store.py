@@ -344,7 +344,7 @@ class Store:
         for attempt, run in enumerate(candidate.runs, start=1):
             await self._connection.execute(
                 "INSERT INTO runs (candidate_id, attempt, run_status, result_json, cpu_ms, peak_mem_bytes, warm_start, "
-                "startup_ms, exec_ms) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                "startup_ms, exec_ms, reset_ms, audit_log_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (
                     candidate_id,
                     attempt,
@@ -352,9 +352,11 @@ class Store:
                     Jsonb(_clean(asdict(run))),
                     run.cpu_ms,
                     run.peak_mem_bytes,
-                    False,  # run_batch creates a fresh sandbox every time; reset and audit id stay NULL
+                    run.warm_start,
                     run.startup_ms,
                     run.exec_ms,
+                    run.reset_ms,
+                    run.audit_log_id,
                 ),
             )
         return candidate_id

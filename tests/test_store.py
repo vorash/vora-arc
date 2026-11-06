@@ -22,6 +22,7 @@ from canned_runs import (
     MEMORIZED,
     TASK,
     WRONG,
+    TABLE,
     WRONG_ANSWER_PASSES,
     CannedRuns,
     batch,
@@ -236,6 +237,28 @@ async def test_a_task_result_is_stored_and_read_back(database_url: str, monkeypa
     assert measured == [(False, None, None)], "no pool: not warm, and nothing invented for reset or audit"
     accuracy = rows(database_url, "SELECT cell_accuracy FROM candidates WHERE verdict = 'failed'")
     assert accuracy == [(0.0,)]
+
+
+async def test_a_pooled_run_stores_vora_s_values_and_null_for_what_it_left_out(
+    database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runs = CannedRuns(monkeypatch)
+    reported = replace(batch(), warm_start=True, reset_ms=3, audit_log_id="exe_1", prepared_reset_ms=7)
+    measured_zero = replace(batch(), warm_start=True, reset_ms=0, audit_log_id="exe_2")
+    left_out = replace(batch(), warm_start=True, reset_ms=None, audit_log_id=None)
+    monkeypatch.setitem(TABLE, GOOD, [reported, left_out])
+    monkeypatch.setitem(TABLE, GOOD_LONGER, [measured_zero, measured_zero])
+    async with open_store(database_url) as store:
+        run_id = await store.begin_run(SETTINGS)
+        await store.save_task_result(run_id, KEY, await solve(store, completions(GOOD, GOOD_LONGER)))
+    assert runs.programs.count(GOOD) == 2
+
+    stored = rows(
+        database_url,
+        "SELECT warm_start, reset_ms, audit_log_id, result_json -> 'prepared_reset_ms' FROM runs ORDER BY id",
+    )
+    assert stored[:2] == [(True, 3, "exe_1", 7), (True, None, None, None)], "a value Vora left out is NULL, not 0"
+    assert stored[2][:3] == (True, 0, "exe_2"), "a real zero stays a zero"
 
 
 async def test_two_runs_of_one_task_stay_apart_and_share_completions(

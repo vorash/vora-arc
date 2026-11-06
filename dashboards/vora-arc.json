@@ -355,7 +355,7 @@
           "legendFormat": "{{pool}} {{state}}"
         }
       ],
-      "description": "Not exported yet: this panel uses the warm-pool design's metric names, and Vora adds them in build step 13. It stays empty until then and has never been checked against a real pool."
+      "description": "Members of each pool by state: starting, idle, busy, resetting, retiring. The pool label is tenant/name."
     },
     {
       "id": 10,
@@ -399,7 +399,7 @@
           "legendFormat": "{{pool}} {{start}}"
         }
       ],
-      "description": "Not exported yet: this panel uses the warm-pool design's metric names, and Vora adds them in build step 13. It stays empty until then and has never been checked against a real pool."
+      "description": "Runs that reached a sandbox. A warm start means the member was running before the run asked for it, which includes a member on its first run."
     },
     {
       "id": 11,
@@ -452,7 +452,7 @@
           "legendFormat": "{{start}} p99"
         }
       ],
-      "description": "Not exported yet: this panel uses the warm-pool design's metric names, and Vora adds them in build step 13. It stays empty until then and has never been checked against a real pool."
+      "description": "From exec start to exit, without the reset, as the runner sees it. The buckets are 10 ms, 50 ms, 100 ms, 500 ms, 1 s, 5 s, 30 s and 300 s, so these quantiles are coarse. Read per-run figures from vora-arc bench, not from here."
     },
     {
       "id": 12,
@@ -505,7 +505,7 @@
           "legendFormat": "{{start}} p99"
         }
       ],
-      "description": "Not exported yet: this panel uses the warm-pool design's metric names, and Vora adds them in build step 13. It stays empty until then and has never been checked against a real pool."
+      "description": "What a run waited before its program ran: the wait to borrow a member, plus the cold start when cold. Coarse buckets, from 1 ms to 5 s."
     },
     {
       "id": 13,
@@ -558,7 +558,7 @@
           "legendFormat": "{{result}} p99"
         }
       ],
-      "description": "Not exported yet: this panel uses the warm-pool design's metric names, and Vora adds them in build step 13. It stays empty until then and has never been checked against a real pool."
+      "description": "Member reset by result, ok or failed. An unsafe no-reset pool and a retired member have no reset, so they add nothing here."
     },
     {
       "id": 14,
@@ -620,7 +620,51 @@
           "legendFormat": "start failed"
         }
       ],
-      "description": "Not exported yet: this panel uses the warm-pool design's metric names, and Vora adds them in build step 13. It stays empty until then and has never been checked against a real pool."
+      "description": "Retired members by cause, runs refused because no member was free within the borrow timeout, and member starts that failed."
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "Pools refused at boot",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 35
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (pool, reason) (vora_pool_not_loaded)",
+          "legendFormat": "{{pool}} {{reason}}"
+        }
+      ],
+      "description": "Pools whose definition is kept but which this runner refused to load, by reason. An unsafe pool shows here after its runner loses VORA_POOL_UNSAFE_REUSE=allow."
     },
     {
       "id": 15,
@@ -631,7 +675,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 35
+        "y": 43
       },
       "panels": []
     },
@@ -647,7 +691,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 36
+        "y": 44
       },
       "fieldConfig": {
         "defaults": {
@@ -690,7 +734,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 36
+        "y": 44
       },
       "fieldConfig": {
         "defaults": {
@@ -743,7 +787,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 36
+        "y": 44
       },
       "fieldConfig": {
         "defaults": {
@@ -786,7 +830,7 @@
     {
       "id": 19,
       "type": "timeseries",
-      "title": "Audit write failures per second",
+      "title": "Audit write failures and dropped pool events per second",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -795,7 +839,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 44
+        "y": 52
       },
       "fieldConfig": {
         "defaults": {
@@ -823,6 +867,15 @@
           },
           "expr": "sum(rate(vora_audit_write_failed_total[5m]))",
           "legendFormat": "failed writes"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(rate(vora_pool_events_dropped_total[5m]))",
+          "legendFormat": "dropped pool events"
         }
       ]
     }

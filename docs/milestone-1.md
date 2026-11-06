@@ -53,8 +53,8 @@ A gVisor sandbox that goes over its memory limit still dies, and later execs rep
 
 | Test | Why | Owner |
 |---|---|---|
-| write to `/workspace`, `/root` | writable in every Vora sandbox | M2, Vora profile work |
-| fill `/tmp` past 16 MB | `/tmp` size is not configurable | M2, Vora profile work |
+| write to `/workspace`, `/root` | writable in every Vora sandbox, by design | Explained in [About warm pools](pools.md) |
+| fill `/tmp` past 16 MB | `/tmp` size is not configurable | Explained in [About warm pools](pools.md) |
 
 ## Not done
 

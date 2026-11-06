@@ -21,6 +21,7 @@ from .vote import Ballot, ballot, vote
 NOT_MEASURED = "not measured"
 CANDIDATE_COUNTS = (16, 32, 64, 128)
 INFRA_ERROR = "Vora failed (no verdict)"
+DENIED_SYSCALLS_NOTE = "Vora's seccomp filter refuses calls without counting them, so no number exists."
 MAX_ERROR_CHARS = 500
 
 _NOT_FINISHED = {
@@ -82,6 +83,13 @@ class Cost:
     """The lower bound: only the time this run had a model request open."""
     notes: tuple[str, ...]
     """Why a figure is not measured, or what it leaves out."""
+
+
+def blocked_net_note(network: str) -> str:
+    """Vora's `egress_denied` counts decisions its gateway made, which only `restricted` has."""
+    if network == "restricted":
+        return "a floor: Vora counts only what its egress gateway refused"
+    return f"{NOT_MEASURED}: network mode {network} has no gateway to count at, and Vora counts only in restricted mode"
 
 
 def gpu_price_from_env() -> float | None:
@@ -182,9 +190,22 @@ def time_split(data: RunData) -> list[PhaseTime]:
             "reset",
             _sum_ms(r.reset_ms for r in data.runs),
             "sum over sandbox runs",
-            "every run used a fresh sandbox" if data.runs and not any(r.warm_start for r in data.runs) else "",
+            _reset_note(data),
         ),
     ]
+
+
+def _reset_note(data: RunData) -> str:
+    if not data.runs:
+        return ""
+    warm = sum(r.warm_start for r in data.runs)
+    if not warm:
+        return "every run used a fresh sandbox"
+    reported = sum(r.reset_ms is not None for r in data.runs)
+    return (
+        f"{warm} of {len(data.runs)} runs used a pool's running sandbox and the rest a fresh one; "
+        f"{reported} of {len(data.runs)} reported a reset of their own"
+    )
 
 
 def cost(data: RunData, gpu_eur_per_hour: float | None) -> Cost:
@@ -270,6 +291,15 @@ def render_markdown(data: RunData, gpu_eur_per_hour: float | None, charts: dict[
         note = f" ({phase.note})" if phase.note else ""
         lines.append(f"| {phase.name} | {value}{note} | {phase.basis} |")
     lines += ["", "Sums over jobs overlap when jobs run at once, so they don't add up to the wall-clock."]
+
+    lines += [
+        "",
+        "## Policy events",
+        "",
+        f"- Denied syscalls: {NOT_MEASURED}. {DENIED_SYSCALLS_NOTE}",
+        f"- Blocked network attempts: {NOT_MEASURED}. This solver doesn't read them. "
+        f"Vora's `egress_denied` exists only in restricted mode, where it is a floor, and pools refuse that mode.",
+    ]
 
     run_cost = cost(data, gpu_eur_per_hour)
     lines += [

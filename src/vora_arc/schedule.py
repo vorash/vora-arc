@@ -12,16 +12,16 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 import httpx
-from vora import Vora, VoraError
+from vora import Pool, Vora, VoraError
 
-from .client import SandboxInfrastructureError, run_batch
+from .client import SandboxInfrastructureError, pool_batch, run_batch
 from .model import BatchResult, Task, Verdict
 from .profile import Profile
 from .verify import Outcome, check_determinism, verify
 
 log = logging.getLogger(__name__)
 
-# The spec's default is the warm pool's size, 8. There is no pool yet, so it stands alone.
+# The spec's default, and the size `solve --pool` gives its pool when this isn't set.
 DEFAULT_MAX_CONCURRENCY = 8
 
 
@@ -60,15 +60,26 @@ def max_concurrency_from_env() -> int:
     return int(raw)
 
 
-async def judge(vora: Vora, profile: Profile, task: Task, program: str, correlation_id: str) -> Judgement:
+async def run_program(
+    vora: Vora, profile: Profile, pool: Pool | None, program: str, task: Task, correlation_id: str
+) -> BatchResult:
+    """The one place that decides how a program runs: a fresh sandbox, or a pool's member."""
+    if pool is None:
+        return await run_batch(vora, profile, program, task, correlation_id=correlation_id)
+    return await pool_batch(pool, profile, program, task, correlation_id=correlation_id)
+
+
+async def judge(
+    vora: Vora, profile: Profile, task: Task, program: str, correlation_id: str, *, pool: Pool | None = None
+) -> Judgement:
     """Run a program, judge it, and re-run a survivor to prove it deterministic."""
-    first = await run_batch(vora, profile, program, task, correlation_id=correlation_id)
+    first = await run_program(vora, profile, pool, program, task, correlation_id)
     started = time.perf_counter()
     outcome = verify(task, program, first)
     verify_ms = _since_ms(started)
     if outcome.verdict is not Verdict.PASSED:
         return Judgement(outcome, (first,), verify_ms)
-    second = await run_batch(vora, profile, program, task, correlation_id=f"{correlation_id}/rerun")
+    second = await run_program(vora, profile, pool, program, task, f"{correlation_id}/rerun")
     started = time.perf_counter()
     outcome = check_determinism(first, second)
     return Judgement(outcome, (first, second), verify_ms + _since_ms(started))
@@ -81,6 +92,7 @@ async def schedule(
     programs: Sequence[str],
     *,
     max_concurrency: int,
+    pool: Pool | None = None,
 ) -> dict[str, ProgramResult]:
     """Judge each distinct program once, at most `max_concurrency` at a time, keyed by SHA-256.
 
@@ -96,7 +108,7 @@ async def schedule(
             queue_ms = round(_since_ms(queued))
             result: Judgement | InfraFailure
             try:
-                result = await judge(vora, profile, task, program, f"{task.id}/{sha256[:12]}")
+                result = await judge(vora, profile, task, program, f"{task.id}/{sha256[:12]}", pool=pool)
             except (SandboxInfrastructureError, VoraError, httpx.HTTPError) as error:
                 log.warning("%s/%s: Vora failed: %s", task.id, sha256[:12], error)
                 result = InfraFailure(f"{type(error).__name__}: {error}")

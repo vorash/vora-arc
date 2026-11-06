@@ -9,6 +9,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from host_safety import violations
 
 from vora_arc.model import BatchResult, Grid, GridResult, GridStatus, RunStatus, Task, Verdict
 from vora_arc.tasks import load_task
@@ -21,11 +22,13 @@ TRAINING = ROOT / "data" / "arc1" / "training"
 needs_data = pytest.mark.skipif(
     not TRAINING.is_dir(), reason="ARC data not downloaded; run scripts/download_data.sh"
 )
+pytestmark = pytest.mark.usefixtures("host_safe_programs")
 
 Transform = Callable[[list[list[int]]], list[list[int]]]
 
 
 def load(path: Path) -> tuple[Task, Transform]:
+    assert not violations(path.read_text()), f"{path} must not run on the host"
     spec = importlib.util.spec_from_file_location(f"solution_{path.stem}", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

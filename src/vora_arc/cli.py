@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import logging
+import secrets
 import sys
 from collections.abc import Sequence
 from functools import partial
@@ -10,8 +12,12 @@ from pathlib import Path
 
 import httpx
 
-from .client import connect
+from .bench import BenchSettings, run_bench
+from .bench_summary import latest_session_by_backend, load_raw, render_summary, summary_exit_code
+from .client import PoolMode, connect, open_pool
+from .corpus import build_corpus, load_solutions, warmup_candidates
 from .generate import REQUEST_TIMEOUT_S, ModelConfig, ModelError, sample
+from .leak_report import BACKENDS, LeakReport, read_leak_suites
 from .model import BatchResult, Verdict
 from .pipeline import solve_task
 from .profile import load_profile
@@ -23,6 +29,15 @@ from .verify import Failed, Outcome
 
 DEFAULT_DATA_DIR = Path("data")
 DEFAULT_RESULTS_DIR = Path("results")
+DEFAULT_SOLUTIONS_DIR = Path("solutions")
+DEFAULT_CORPUS_SEED = 1
+
+
+def _non_negative_int(text: str) -> int:
+    value = int(text)
+    if value < 0:
+        raise argparse.ArgumentTypeError(f"expected zero or more, got {text}")
+    return value
 
 
 def _positive_int(text: str) -> int:
@@ -88,6 +103,11 @@ async def solve(args: argparse.Namespace) -> int:
         open_store(url) as store,
         connect(profile) as vora,
         httpx.AsyncClient(timeout=REQUEST_TIMEOUT_S) as http,
+        (
+            open_pool(vora, profile, f"vora-arc-solve-{secrets.token_hex(4)}", PoolMode.WARM, max_concurrency)
+            if args.pool
+            else contextlib.nullcontext(None)
+        ) as pool,
     ):
         run_id = await store.begin_run(settings)
         solved = infra_errors = 0
@@ -99,7 +119,7 @@ async def solve(args: argparse.Namespace) -> int:
                 result = await solve_task(
                     task,
                     sampler=partial(sample, http, model, store, key),
-                    scheduler=partial(schedule, vora, profile, max_concurrency=max_concurrency),
+                    scheduler=partial(schedule, vora, profile, max_concurrency=max_concurrency, pool=pool),
                     samples=args.samples,
                     refine=args.refine,
                 )
@@ -136,6 +156,31 @@ async def write_run_report(args: argparse.Namespace) -> int:
     return 0
 
 
+async def bench(args: argparse.Namespace) -> int:
+    profile = load_profile(args.profile)
+    solutions = load_solutions(args.solutions)
+    tasks = {solution.task_id: load_task(find_task(args.data_dir, args.dataset, solution.task_id)) for solution in solutions}
+    corpus = build_corpus(solutions, args.candidates, args.seed)
+    warmup = warmup_candidates(solutions, args.concurrency * 3 if args.warmup is None else args.warmup)
+    settings = BenchSettings(PoolMode(args.mode), args.concurrency, args.image_resolved_via, args.server_version)
+    async with connect(profile) as vora:
+        return await run_bench(profile, corpus, warmup, tasks, settings, args.raw, vora=vora)
+
+
+async def bench_summary(args: argparse.Namespace) -> int:
+    raw = load_raw(*args.raw)
+    suites = read_leak_suites(args.leak_pytest, args.leak_vora, latest_session_by_backend(raw))
+    print(render_summary(raw, suites), end="")
+    return summary_exit_code(raw, suites)
+
+
+def _leak_report(text: str) -> LeakReport:
+    backend, _, path = text.partition("=")
+    if backend not in BACKENDS or not path:
+        raise argparse.ArgumentTypeError(f"expected BACKEND=PATH with a backend in {BACKENDS}, not {text!r}")
+    return LeakReport(backend, Path(path))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="vora-arc")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -153,12 +198,54 @@ def main(argv: list[str] | None = None) -> int:
     solver.add_argument("--refine", action="store_true", help="give a task with no passed candidate a second round")
     solver.add_argument("--data-dir", default=DEFAULT_DATA_DIR, type=Path)
     solver.add_argument("--profile", type=Path, help="profile TOML (default: $VORA_ARC_PROFILE, then profiles/python-arc.toml)")
+    solver.add_argument("--pool", action="store_true", help="run programs on a warm pool instead of a fresh sandbox each")
+    bencher = commands.add_parser("bench", help="run one arm of experiment 1 and append it to a raw file")
+    bencher.add_argument("--mode", required=True, choices=[mode.value for mode in PoolMode])
+    bencher.add_argument("--candidates", type=_positive_int, default=10_000, help="candidates in the corpus, each run once")
+    bencher.add_argument("--seed", type=int, default=DEFAULT_CORPUS_SEED, help="the corpus seed; arms to compare share it")
+    bencher.add_argument("--warmup", type=_non_negative_int, help="runs before measuring (default: 3 x --concurrency)")
+    bencher.add_argument("--concurrency", type=_positive_int, default=8)
+    bencher.add_argument("--solutions", default=DEFAULT_SOLUTIONS_DIR, type=Path, help="hand-written solutions, one <task id>.py each")
+    bencher.add_argument("--dataset", default="arc1", choices=["arc1", "arc2"])
+    bencher.add_argument("--data-dir", default=DEFAULT_DATA_DIR, type=Path)
+    bencher.add_argument("--profile", type=Path, help="profile TOML (default: $VORA_ARC_PROFILE, then profiles/python-arc.toml)")
+    bencher.add_argument("--raw", default=DEFAULT_RESULTS_DIR / "bench" / "experiment-1.jsonl", type=Path)
+    bencher.add_argument(
+        "--image-resolved-via",
+        choices=["containerd", "cache"],
+        help="what you checked on the host; a client can't read it (docs/experiment-1.md)",
+    )
+    bencher.add_argument("--server-version", help="record this instead of asking GET /v1/runners")
+    summarizer = commands.add_parser("bench-summary", help="rebuild the summary from raw files")
+    summarizer.add_argument("raw", type=Path, nargs="+")
+    summarizer.add_argument(
+        "--leak-pytest",
+        type=_leak_report,
+        action="append",
+        default=[],
+        metavar="BACKEND=PATH",
+        help="tests/test_hostile.py's --junitxml file; repeat per backend",
+    )
+    summarizer.add_argument(
+        "--leak-vora",
+        type=_leak_report,
+        action="append",
+        default=[],
+        metavar="BACKEND=PATH",
+        help="the go test -v output of Vora's leak suites; repeat per backend",
+    )
     reporter = commands.add_parser("report", help="write a logged run's Markdown report and charts")
     reporter.add_argument("--run", required=True, help="run id printed by solve")
     reporter.add_argument("--out", default=DEFAULT_RESULTS_DIR, type=Path)
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.WARNING)
-    commands_by_name = {"run-solution": run_solution, "solve": solve, "report": write_run_report}
+    commands_by_name = {
+        "run-solution": run_solution,
+        "solve": solve,
+        "report": write_run_report,
+        "bench": bench,
+        "bench-summary": bench_summary,
+    }
     return asyncio.run(commands_by_name[args.command](args))
 
 

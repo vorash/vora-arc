@@ -8,14 +8,15 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import secrets
 from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
-from vora import Vora
+from vora import Pool, Vora
 
 from vora_arc import model
-from vora_arc.client import connect, run_batch
+from vora_arc.client import connect, pool_batch, pool_template, run_batch
 from vora_arc.model import BatchResult, GridStatus, Pair, RunStatus, Task
 from vora_arc.profile import load_profile
 
@@ -29,7 +30,17 @@ pytestmark = [
 
 HOSTILE = Path(__file__).parent / "hostile"
 PROFILE = load_profile()
-M2_WRITABLE = "M2: Vora cannot make the root filesystem read-only outside /tmp yet"
+# docs/pools.md explains these three. Strict, so that either changing in Vora shows up here.
+WRITABLE_BY_DESIGN = (
+    "Vora binds /workspace and /root read-write by design: its file API serves them. "
+    "What holds on a pool is test_a_write_does_not_survive_into_the_next_run"
+)
+NO_TMPFS_SIZE = (
+    "Vora gives /tmp no size option, so 32 MB fits. test_filling_tmp_runs_into_the_memory_limit shows what bounds it, "
+    "and test_a_write_does_not_survive_into_the_next_run that the next run starts clean"
+)
+# One cell per path, in the order find_hostile_files.py checks them.
+WRITERS = {"write_workspace": 0, "write_root_home": 1, "fill_tmp": 2}
 
 # Inputs are marked by their first cell (0, 1, 2) so a program can misbehave on one of them.
 TASK = Task(
@@ -96,8 +107,8 @@ async def test_network_access_fails_inside_the_program(vora: Vora, name: str) ->
     [
         "write_slash",
         "write_usr",
-        pytest.param("write_workspace", marks=pytest.mark.xfail(strict=True, reason=M2_WRITABLE)),
-        pytest.param("write_root_home", marks=pytest.mark.xfail(strict=True, reason=M2_WRITABLE)),
+        pytest.param("write_workspace", marks=pytest.mark.xfail(strict=True, reason=WRITABLE_BY_DESIGN)),
+        pytest.param("write_root_home", marks=pytest.mark.xfail(strict=True, reason=WRITABLE_BY_DESIGN)),
     ],
 )
 async def test_writing_outside_tmp_fails(vora: Vora, name: str) -> None:
@@ -107,11 +118,79 @@ async def test_writing_outside_tmp_fails(vora: Vora, name: str) -> None:
     assert statuses(result) == [GridStatus.ERROR] * 3
 
 
-@pytest.mark.xfail(strict=True, reason="M2: Vora cannot mount a 16 MB tmpfs at /tmp yet")
+@pytest.mark.xfail(strict=True, reason=NO_TMPFS_SIZE)
 async def test_filling_tmp_past_16mb_fails(vora: Vora) -> None:
     result = await run(vora, "fill_tmp")
 
     assert statuses(result) == [GridStatus.ERROR] * 3
+
+
+async def test_filling_tmp_runs_into_the_memory_limit(vora: Vora) -> None:
+    result = await run(vora, "fill_tmp_past_memory")
+
+    assert GridStatus.OK not in statuses(result), "2 GB went into /tmp under a 256 MiB limit"
+    assert GridStatus.TIMEOUT not in statuses(result), "the per-input timeout ended it, so this shows nothing"
+    assert result.run_status is RunStatus.KILLED_OOM
+    if result.peak_mem_bytes is not None:
+        assert result.peak_mem_bytes <= PROFILE.memory_bytes
+
+
+@pytest.fixture
+async def one_member(vora: Vora) -> AsyncIterator[Pool]:
+    """With one member and one run at a time, the second run has to land on the first's sandbox."""
+    pool = await vora.pools.declare(
+        f"vora-arc-hostile-{secrets.token_hex(4)}", **pool_template(PROFILE), size=1, max_size=1
+    )
+    yield pool
+    await pool.delete()
+
+
+async def plant_then_look(pool: Pool, writer: str) -> tuple[BatchResult, BatchResult]:
+    program = (HOSTILE / f"{writer}.py").read_text()
+    looker = (HOSTILE / "find_hostile_files.py").read_text()
+    planted = await pool_batch(pool, PROFILE, program, TASK, correlation_id=f"hostile/{writer}")
+    assert statuses(planted) == [GridStatus.OK] * 3, "the write has to have worked for this to show anything"
+    looked = await pool_batch(pool, PROFILE, looker, TASK, correlation_id=f"hostile/{writer}/look")
+    assert looked.sandbox_id == planted.sandbox_id, "a different sandbox would be clean anyway"
+    assert looked.warm_start is True
+    return planted, looked
+
+
+@pytest.mark.parametrize(("writer", "cell"), WRITERS.items())
+async def test_a_write_does_not_survive_into_the_next_run(one_member: Pool, writer: str, cell: int) -> None:
+    _, looked = await plant_then_look(one_member, writer)
+
+    assert looked.grids[0].output is not None
+    assert looked.grids[0].output[0][cell] == 0, f"run B on the same sandbox found what {writer} left"
+    assert looked.reset_outcome == "POOL_RESET_OK"
+
+
+@pytest.mark.skipif(
+    not (os.environ.get("VORA_ADMIN_API_KEY") and os.environ.get("VORA_ARC_TENANT_ID")),
+    reason="needs VORA_ADMIN_API_KEY, VORA_ARC_TENANT_ID and a runner with VORA_POOL_UNSAFE_REUSE=allow",
+)
+@pytest.mark.parametrize(("writer", "cell"), WRITERS.items())
+async def test_without_a_reset_the_same_write_does_survive(vora: Vora, writer: str, cell: int) -> None:
+    """The control: it shows the test above can find a leak, and why the reset exists."""
+    name = f"vora-arc-hostile-unsafe-{secrets.token_hex(4)}"
+    async with Vora(api_key=os.environ["VORA_ADMIN_API_KEY"]) as admin:
+        await admin.pools.declare(
+            name,
+            **pool_template(PROFILE),
+            size=1,
+            max_size=1,
+            reuse="unsafe_no_reset",
+            tenant_id=os.environ["VORA_ARC_TENANT_ID"],
+        )
+    pool = await vora.pools.get(name)
+    try:
+        _, looked = await plant_then_look(pool, writer)
+    finally:
+        await pool.delete()
+
+    assert looked.grids[0].output is not None
+    assert looked.grids[0].output[0][cell] == 1
+    assert looked.reset_outcome == "POOL_RESET_SKIPPED"
 
 
 @pytest.mark.parametrize("name", ["print_100mb", "flood_fd1"])

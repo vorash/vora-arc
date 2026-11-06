@@ -60,12 +60,20 @@ class BatchResult:
     program_sha256: str
     run_status: RunStatus
     grids: tuple[GridResult, ...]
-    sandbox_id: str
+    sandbox_id: str | None
     startup_ms: int
     exec_ms: int
     peak_mem_bytes: int | None
     cpu_ms: int | None
     stderr_tail: str
+    warm_start: bool = False
+    reset_ms: int | None = None
+    """This run's own reset, after it exited. None when none was reported, never 0 for that."""
+    audit_log_id: str | None = None
+    prepared_reset_ms: int | None = None
+    """The earlier reset that prepared this run's sandbox."""
+    reset_outcome: str | None = None
+    sandbox_run: int | None = None
 
 
 class Verdict(StrEnum):
