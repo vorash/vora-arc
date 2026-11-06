@@ -1,15 +1,15 @@
 # vora-arc
 
-Solves ARC-AGI tasks by having a language model write candidate
+vora-arc solves ARC-AGI tasks by having a language model write candidate
 `transform(grid)` programs and running each one in a
 [Vora](https://github.com/vorash/vora) sandbox. Vora runs the code and reports
-raw results; this package decides which programs are correct.
+raw results. This package decides which programs are correct.
 
 ## Results
 
 Mistral 7B solved none of the first 100 ARC-AGI-1 evaluation tasks at 64 samples per task. The same pipeline
 solved 7 of 12 hand-picked simple tasks, so the zero comes from the model and its plain prompt. Generation set
-the run's length: sandbox time would be 13% of it even if no two sandboxes overlapped. [The results document](docs/experiments-2-3-results.md)
+the run's length. Sandbox time would be 13% of it even if no two sandboxes overlapped. [The results document](docs/experiments-2-3-results.md)
 has the method, the limits and what wasn't measured.
 
 | Tasks | Samples per task | Solved | Programs that passed train pairs | GPU time, cost |
@@ -41,7 +41,7 @@ vLLM (GPU) --completions--> vora-arc --programs--> Vora sandboxes (pool)
 
 `vora-arc solve` asks the model for candidate programs and caches each completion. It runs every distinct
 program in a sandbox, judges the raw results against the train pairs, and votes with the programs that passed.
-Vora knows nothing about ARC: it runs code and reports what happened.
+Vora knows nothing about ARC. It runs code and reports what happened.
 [The pipeline document](docs/model-pipeline.md) explains each step, and [the pool document](docs/pools.md) covers
 warm pools.
 
@@ -59,7 +59,7 @@ uv run vora-arc report --run $RUN --out /tmp/reports
 diff /tmp/reports/$RUN/report.md results/l4-2026-11-06/$RUN/report.md
 ```
 
-To run it again you need a GPU, a vLLM v0.32.0 server, a Vora API and an empty database. Sampling isn't seeded,
+To run the experiments again, you need a GPU, a vLLM v0.32.0 server, a Vora API and an empty database. Sampling isn't seeded,
 so a new run writes different programs and its numbers can differ. A restored database would answer from its
 cached completions.
 

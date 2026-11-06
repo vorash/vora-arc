@@ -2,7 +2,7 @@
 
 `solve` handles one task at a time unless `--tasks-at-once` says otherwise. Sandbox jobs
 run concurrently under `VORA_MAX_CONCURRENCY`, and tasks share that cap, so it holds for
-the whole run. They also share a limit of 8 open model requests.
+the whole run. Tasks also share a limit of 8 open model requests.
 
 Use `--tasks-at-once` on a real model. A request lasts as long as its longest sample, so
 a runaway sample at the 4096-token limit would otherwise keep the GPU almost idle for
@@ -11,7 +11,7 @@ minutes, with every later task waiting behind it.
 | Module | Job |
 |---|---|
 | `generate` | Build the prompt, sample completions through the cache, extract programs |
-| `schedule` | Run a task's distinct programs (asyncio now; Ray would replace this one module), on a fresh sandbox or a pool |
+| `schedule` | Run a task's distinct programs (asyncio now, and Ray would replace this one module), on a fresh sandbox or a pool |
 | `verify` | Judge one run (from Milestone 1, unchanged) |
 | `vote` | Choose up to two answers |
 | `refine` | Build the second-round prompt |
@@ -37,7 +37,7 @@ minutes, with every later task waiting behind it.
   `infra_error`, and `solve` exits non-zero. The report counts the tasks it hit, says
   they can't be judged, and shows accuracy both with and without them.
 - **A refine prompt too long for the model leaves the first round standing.** The prompt
-  shows three programs and a diff per example, so a big task's can outgrow the model's
+  shows three programs and a diff per example, so a big task's prompt can outgrow the model's
   context. The model's refusal is logged, and the report's round 2 line counts only the
   tasks that got a round 2. Any other refusal still stops the run.
 - **A model outage fails the run and keeps what finished.** Completions and finished
@@ -49,7 +49,7 @@ minutes, with every later task waiting behind it.
 - **A sample has one text.** When two runs race for a sample, the first text saved is
   the one both runs judge, so a candidate always matches the completion it points at.
 - **Credentials in `VLLM_URL` never stay in the URL.** httpx logs and raises the URL it
-  was given, so they travel as Basic auth instead.
+  was given, so vora-arc sends them as Basic auth instead.
 - **A bug in one job cancels the task's other jobs.** Each destroys its sandbox before
   the error reaches `solve`, including a sandbox still being created.
 - **Ctrl-C closes the run as `interrupted`.** `running` means the run is still live, or
@@ -59,7 +59,7 @@ minutes, with every later task waiting behind it.
 
 | Addition | Why |
 |---|---|
-| `solve_runs` | One row per `solve`, with its settings and status (`running`, `finished`, `failed`, `interrupted`). This is the run id. The spec's `runs` table means sandbox runs |
+| `solve_runs` | One row per `solve`, with its settings and status (`running`, `finished`, `failed`, `interrupted`). Its id is the run id. The spec's `runs` table means sandbox runs |
 | `solve_run_tasks` | Each task as that run solved it. The spec keeps the JSON on `tasks`, where the first definition of an id would win forever, so `tasks` holds only ids here |
 | `candidates.run_id`, `answers.run_id` | Tell runs apart. `completions` has no run id, because the cache crosses runs |
 | `candidates.sample_index`, `prompt_hash` | Link a candidate to its completion, and let a report re-vote on the first k samples |
@@ -97,11 +97,11 @@ nothing else.
 
 ## Verified
 
-Against the fake model, real PostgreSQL and real sandboxes on vora-mini, under both
+These cases ran against the fake model, real PostgreSQL and real sandboxes on vora-mini, under both
 `python-arc` (gVisor) and `python-arc-bwrap`: every verdict, duplicates, refinement,
 a real ARC task, the second run making no model request, every sandbox destroyed, and
 Ctrl-C with sandboxes running.
-Run it with `uv run pytest -m sandbox`.
+Run them with `uv run pytest -m sandbox`.
 
 ## Verified on a real model
 

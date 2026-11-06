@@ -39,7 +39,7 @@ A pooled run's exit reason and counters decide its status, with the same order a
 sandbox's `stats()`: `oom_kills`, then `pids_limit_hits`, then the reason. The counters
 come first because Vora reports `EXITED` when a program hits the pids limit and the runner
 still exits 0. A kill can also take the stream down before `exit`. `pool_result` then
-reads the run's record from `pool.execs`, and only calls the run a Vora failure if that
+reads the run's record from `pool.execs`, and calls the run a Vora failure only if that
 record shows no kill.
 
 ## What vora-arc doesn't count
@@ -48,7 +48,7 @@ record shows no kill.
 so reports say "not measured" and nothing stores a number.
 
 `blocked_net_attempts` would come from `egress_denied`, which counts decisions of the egress
-gateway. It exists only in `restricted` mode, and it is a floor there, because traffic that
+gateway. It exists only in `restricted` mode, and it is a lower bound there, because traffic that
 never reaches the gateway isn't counted. Pools refuse that mode, and both shipped profiles
 use `none`, which has no interface to count at. Reports say "not measured".
 
@@ -101,7 +101,7 @@ pool vora-arc-bench-warm-1a2b3c was refused for profile python-arc: pool: backen
 ```
 
 The `cold` arm still declares on that Vora, because a pool of size 0 reuses nothing. This comes from
-reading `internal/pool/spec.go`, and no real server has answered it here.
+reading `internal/pool/spec.go`, and no real server has answered that declare here.
 
 Under bwrap, an idle sandbox holds 10 or 11 tasks, so `pids = 16` leaves the workload 5.
 The runner needs 2: itself and one worker. Under gVisor the limit counts the Sentry's
@@ -139,7 +139,7 @@ memory cgroup of the process that writes them, so under bwrap they count against
 `memory.max` with the program's own memory. Under gVisor the Sentry holds them, and the Sentry
 runs in the sandbox's cgroup. `test_filling_tmp_runs_into_the_memory_limit` expects `KILLED_OOM`
 from a program that writes 2 GB. It hasn't run yet, so treat this paragraph as read from the
-code and not as measured. Two limits sit beside it:
+code and not as measured. Two other limits matter here:
 
 - Vora sets a swap limit of 0 (`memory.swap.max` in `internal/cgroup/subtree.go`, `MemorySwapMax` in
   `internal/cgroup/systemd.go`), so pages charged to the sandbox can't move to swap, tmpfs pages included.

@@ -1,6 +1,6 @@
 # Milestone 1: harness
 
-Built: the in-sandbox runner and `vora/arc` image (`sandbox/`), task loading
+This milestone built the in-sandbox runner and `vora/arc` image (`sandbox/`), task loading
 and verification, ten hand-written solutions, the client and profiles, the
 hostile suite, and `vora-arc run-solution`. No Vora code changed.
 
@@ -21,25 +21,25 @@ VORA_ARC_PROFILE=profiles/python-arc-bwrap.toml … uv run pytest -m sandbox
 | sandbox create (6 runs of one task) | 95-128 ms | 1118-1146 ms |
 | runner exec (same runs) | 88-98 ms | 60-61 ms |
 
-Timings were measured from the laptop through an SSH tunnel to the API, so they
+Timings came from the laptop through an SSH tunnel to the API, so they
 include one round trip each.
 
 ### Update: Vora v0.10.5 (2026-11-05)
 
-The sandbox suite was re-run on v0.10.5. The hostile suite gives gVisor 12 pass, 3
-expected failures, and bwrap 12 pass, 3 expected failures, the same set on both. The
-hand-written solutions pass 10 / 10 on both. bwrap gained two: the 2 GB allocation's
+The sandbox suite ran again on v0.10.5. On the hostile suite, gVisor has 12 passes and 3
+expected failures, and bwrap has 12 passes and 3 expected failures, the same set on both. The
+hand-written solutions pass 10 / 10 on both. bwrap gained two passes: the 2 GB allocation's
 peak memory (vorash/vora#108, since v0.10.3), and the environment probe
 (vorash/vora#107, since v0.10.5).
 
 **Skip v0.10.3 on bwrap.** Its OOM shim needs OS threads that count against `pids`,
-so at this profile's `pids = 16` 8 of 40 runs of the solution suite failed. On v0.10.4,
-40 of 40 passed, and on v0.10.5 25 of 25. A long-lived sandbox is still at risk at this limit: after about 50
+so at this profile's `pids = 16`, 8 of 40 runs of the solution suite failed. On v0.10.4,
+40 of 40 passed, and on v0.10.5, 25 of 25 passed. A long-lived sandbox is still at risk at this limit: after about 50
 execs in one sandbox on a 16-core host, `vora-init`'s threads use up the limit
 (vorash/vora#125). This harness runs one exec per sandbox, so it isn't affected yet,
 but warm pools would be.
 
-The 10x create gap above was not bwrap or systemd. gRPC's reconnect backoff made the
+Neither bwrap nor systemd caused the 10x create gap above. gRPC's reconnect backoff made the
 runner wait about 1 s before retrying the agent's socket (vorash/vora#114, fixed in
 v0.10.2). Measured on vora-mini through the CLI, a different method from the table
 above, v0.10.2 creates a bwrap sandbox in 183-187 ms and a gVisor sandbox in 108-125 ms.

@@ -58,7 +58,7 @@ On the `warm` arm, bwrap and gVisor also agreed with each other on all 10,000, i
 
 ## Where the time goes
 
-Medians over ordinary programs, in ms, and the mean reset. `Before start` is from sending the request to
+The table gives medians over ordinary programs, in ms, and the mean reset. `Before start` is from sending the request to
 the `run` frame. `Exec` is from the `run` frame to `exit`.
 
 | Backend | Arm | Before start | Exec | Reset, mean |
@@ -83,10 +83,10 @@ Three things follow:
 
 ## What limits it
 
-These come from separate runs on the same host, which are in no number above. They used 200 to 2,000
+These findings come from separate runs on the same host, and those runs are in no number above. They used 200 to 2,000
 runs, so their programs per second isn't comparable with the table.
 
-**A warm run's floor is the runner's Python process, not Vora.** One slot, one member, 200 runs each:
+**A warm run's floor is the runner's Python process, not Vora.** Each command ran 200 times on one slot and one member:
 
 | Command | bwrap p50, ms | gVisor p50, ms |
 |---|---|---|
@@ -109,12 +109,12 @@ concurrency 8), so the candidate's own work is a small part of this corpus's tim
 At concurrency 16 the host had 16% idle on bwrap and 17% on gVisor, over 8 s of `vmstat`. To rule out the
 client and the pool, two client processes ran two pools at concurrency 8 each on bwrap. Together they reached
 129 programs per second, against 126 for one client at 16, with about the same exec p50 (101.1 and 100.4 ms),
-so neither of them is the limit. Concurrency 8 is one sandbox per physical core. The experiment's
+so neither the client nor the pool is the limit. Concurrency 8 is one sandbox per physical core. The experiment's
 numbers already include this contention.
 
 ## How to read it
 
-- **The corpus moves every number.** Most programs here do little work, so startup and reset weigh more
+- **The corpus affects every number.** Most programs here do little work, so startup and reset weigh more
   than they would for slow programs. The gap between arms would narrow as programs take longer.
 - **The shapes favour `cold`.** So the measured gap is smaller than what a cold start really costs. See
   [Which way the shapes bias the gap](experiment-1.md#what-limits-each-arms-number).
