@@ -36,6 +36,10 @@ minutes, with every later task waiting behind it.
 - **A Vora failure isn't a verdict.** The candidate keeps a NULL verdict and an
   `infra_error`, and `solve` exits non-zero. The report counts the tasks it hit, says
   they can't be judged, and shows accuracy both with and without them.
+- **A refine prompt too long for the model leaves the first round standing.** The prompt
+  shows three programs and a diff per example, so a big task's can outgrow the model's
+  context. The model's refusal is logged, and the report's round 2 line counts only the
+  tasks that got a round 2. Any other refusal still stops the run.
 - **A model outage fails the run and keeps what finished.** Completions and finished
   tasks stay stored, and the next run requests only what's missing.
 - **A report scores against the task as that run solved it.** The task goes into

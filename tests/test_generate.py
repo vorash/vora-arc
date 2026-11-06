@@ -7,6 +7,7 @@ tests/test_store.py covers the same interface on PostgreSQL.
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncIterator, Iterator
 
 import httpx
@@ -17,6 +18,7 @@ from vora_arc import generate, model
 from vora_arc.generate import (
     ModelConfig,
     ModelError,
+    PromptTooLong,
     ask_for_program,
     extract_program,
     prompt_hash,
@@ -225,6 +227,21 @@ async def test_a_refused_request_is_not_retried(fake: FakeModel, http: httpx.Asy
     with pytest.raises(ModelError, match="HTTP 400"):
         await sample(http, config(fake), DictCache(), "t1", "p", 2)
     assert len(fake.requests) == 1
+
+
+async def test_a_prompt_over_the_context_length_is_told_apart(fake: FakeModel, http: httpx.AsyncClient) -> None:
+    message = "This model's maximum context length is 32768 tokens. However, your prompt contains 60004 input tokens"
+    fake.faults.append((400, json.dumps({"error": {"message": message}})))
+    with pytest.raises(PromptTooLong):
+        await sample(http, config(fake), DictCache(), "t1", "p", 2)
+    assert len(fake.requests) == 1
+
+
+async def test_any_other_refusal_is_not_a_long_prompt(fake: FakeModel, http: httpx.AsyncClient) -> None:
+    fake.faults.append((400, '{"error": "unknown model"}'))
+    with pytest.raises(ModelError) as refused:
+        await sample(http, config(fake), DictCache(), "t1", "p", 2)
+    assert not isinstance(refused.value, PromptTooLong), "a broken setup has to stop the run"
 
 
 async def test_giving_up_keeps_what_arrived_and_the_next_run_continues(fake: FakeModel, http: httpx.AsyncClient) -> None:

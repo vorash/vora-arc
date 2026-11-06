@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 
-from .generate import Sampled, ask_for_program, extract_program, task_prompt
+from .generate import PromptTooLong, Sampled, ask_for_program, extract_program, task_prompt
 from .model import BatchResult, Task, Verdict
 from .refine import Failure, closest_failures, refine_prompt
 from .schedule import InfraFailure, ProgramResult, program_sha256
 from .verify import Failed
 from .vote import Answer, Ballot, ballot, vote
+
+log = logging.getLogger(__name__)
 
 # Given a prompt and a sample count.
 Sampler = Callable[[str, int], Awaitable[Sampled]]
@@ -82,11 +85,16 @@ async def solve_task(
     if refine and not _passed(candidates):
         failures = closest_failures(_failures(candidates))
         if failures:
-            more, timing = await _run_round(
-                task, 2, refine_prompt(task, failures), max(1, samples // 2), sampler, scheduler, seen
-            )
-            candidates += more
-            timings.append(timing)
+            # A big task's failures can outgrow the model's context. The task keeps its first round.
+            try:
+                more, timing = await _run_round(
+                    task, 2, refine_prompt(task, failures), max(1, samples // 2), sampler, scheduler, seen
+                )
+            except PromptTooLong as error:
+                log.warning("%s: not refined: %s", task.id, error)
+            else:
+                candidates += more
+                timings.append(timing)
 
     started = time.perf_counter()
     answers = vote(task, _ballots(candidates, seen))

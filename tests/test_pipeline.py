@@ -26,7 +26,7 @@ from canned_runs import (
 )
 from fake_model import DictCache, FakeModel
 
-from vora_arc.generate import ModelConfig, sample
+from vora_arc.generate import ModelConfig, PromptTooLong, Sampled, sample
 from vora_arc.model import Task, Verdict
 from vora_arc.pipeline import TaskResult, solve_task
 from vora_arc.schedule import ProgramResult, schedule
@@ -146,6 +146,24 @@ async def test_a_second_round_copy_of_a_round_one_program_is_not_run_again(
     assert runs.programs == [CLOSE]
     copy = result.candidates[-1]
     assert (copy.round, copy.first_copy, copy.verdict) == (2, (1, 0), Verdict.FAILED)
+
+
+async def test_a_refine_prompt_too_long_for_the_model_leaves_the_first_round_standing(
+    http: httpx.AsyncClient, runs: CannedRuns
+) -> None:
+    server = FakeModel(lambda prompt: completions(CLOSE, WRONG))
+    with server.running():
+        real = partial(sample, http, ModelConfig(url=server.url, model="m"), DictCache(), TASK.id)
+
+        async def sampler(prompt: str, n: int) -> Sampled:
+            if "These programs were tried" in prompt:
+                raise PromptTooLong("too long")
+            return await real(prompt, n)
+
+        result = await solve_task(TASK, sampler=sampler, scheduler=_scheduler, samples=2, refine=True)
+    assert {c.round for c in result.candidates} == {1}
+    assert [t.round for t in result.timings] == [1], "the report counts a task as refined from its round 2 timing"
+    assert result.answer_round == 1
 
 
 async def test_a_task_with_a_pass_is_not_refined(http: httpx.AsyncClient, runs: CannedRuns) -> None:
