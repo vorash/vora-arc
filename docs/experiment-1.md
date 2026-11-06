@@ -2,8 +2,8 @@
 
 Experiment 1 measures the cost of isolation. It runs a corpus of synthetic candidates (hand-written
 solutions, mutated variants and junk) three ways, and reports programs per second, p50, p99 and the
-leak-test results. No results exist yet. This page gives the commands and says what limits each
-number.
+leak-test results. This page gives the commands and says what limits each number.
+[Experiment 1 results](experiment-1-results.md) has the numbers.
 
 | Arm (`--mode`) | Pool shape | What it measures |
 |---|---|---|
