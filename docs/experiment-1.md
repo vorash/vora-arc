@@ -72,9 +72,8 @@ You need:
   reserves CPU and memory for all of `max_size` when a pool is declared, so the `cold` arm needs room
   for twice the concurrency. If the runner hasn't got it, the declare is refused and `bench` exits
   with the API's message. Lower `--concurrency` on every arm.
-- For `warm` and `warm-no-reset` on gVisor, the Vora release that contains
-  [vorash/vora#150](https://github.com/vorash/vora/pull/150), which is open, so no release has it yet.
-  Without it the declare is refused with `backend cannot reset sandboxes`, `bench` exits with that
+- For `warm` and `warm-no-reset` on gVisor, Vora v0.10.8 or later, which has
+  [vorash/vora#150](https://github.com/vorash/vora/pull/150). Before that the declare is refused with `backend cannot reset sandboxes`, `bench` exits with that
   message, and the summary lists the session as incomplete. `cold` still runs there, so a gVisor
   summary with only `cold` numbers means this. See
   [What a pool asks of a profile](pools.md#what-a-pool-asks-of-a-profile).
@@ -114,13 +113,17 @@ These checks need the host, because the API doesn't report them.
    nproc
    ```
 
-2. Check that the runner resolves the image through containerd. In `auto` mode the runner retries
-   containerd on every start of an image that only the local cache has
-   ([vorash/vora#148](https://github.com/vorash/vora/issues/148), open), which would inflate the
+2. Check that the runner resolves the image through containerd. In `auto` mode the runner tries
+   containerd again every 5 minutes for an image that only the local cache has
+   ([vorash/vora#148](https://github.com/vorash/vora/issues/148), fixed in v0.10.8; before that it
+   tried on every start). Each try spends seconds on the start that makes it, which would inflate the
    `cold` arm. The API can't show this: the `image_rootfs` field exists, and nothing fills it.
 
+   This command is for a containerd that runs as root. For a rootless one, drop `sudo` and pass
+   `--address "$XDG_RUNTIME_DIR/containerd/containerd.sock"`.
+
    ```sh
-   ctr --address "$XDG_RUNTIME_DIR/containerd/containerd.sock" --namespace vora images ls | grep vora/arc
+   sudo ctr --namespace vora images ls | grep vora/arc
    ```
 
    If the image is listed, pass `--image-resolved-via containerd`. If it isn't, run
@@ -288,9 +291,8 @@ the summary compares it with the bench sessions.
 | `bwrap` | Both tests, each with `write_workspace-0`, `write_root_home-1` and `fill_tmp-2` | `TestBwrapReusableLeakMatrix`, `TestPoolLeakMatrix/bwrap`, `TestPoolDisconnectMidRun/bwrap` |
 | `gvisor` | The same | `TestLeakMatrixGvisor`, `TestPoolLeakMatrix/gvisor`, `TestPoolDisconnectMidRun/gvisor` |
 
-`TestBwrapReusableLeakMatrix` is on Vora's `main`. The rest of the log's tests are in
-[vorash/vora#153](https://github.com/vorash/vora/pull/153), which is open, so a checkout without that
-pull request can't reach `passed`. A row that runs under another backend's name doesn't count, so a
+The rest of the log's tests came with [vorash/vora#153](https://github.com/vorash/vora/pull/153), so a
+checkout older than v0.10.8 can't reach `passed`. A row that runs under another backend's name doesn't count, so a
 gVisor skip in a bwrap log doesn't matter, and the same log says `incomplete` for `gvisor`.
 
 | Result | Meaning |
@@ -341,7 +343,7 @@ show as off shape. The top table counts reset failures and makes a nonzero count
 and programs per second reflects `cycle_ms`, so read both.
 
 **`cold`.** A sandbox start dominates. `startup_ms` is the borrow wait plus the start. If the image
-isn't in containerd, every start also carries a registry attempt (#148).
+isn't in containerd, a start every 5 minutes also carries a registry attempt (#148).
 
 `cold` is a pool of size 0, not a `force_cold` flag. Vora has no such flag, because a size-0 pool is
 its way to bypass reuse. That adds three differences to a plain cold start:
@@ -358,8 +360,7 @@ its way to bypass reuse. That adds three differences to a plain cold start:
 
 **`warm`.** The program's own run dominates `wall_ms`: the runner starts a Python interpreter for each
 run. The reset falls outside `wall_ms`, but the client holds its slot until `run_done`, so the reset
-lowers programs per second. On gVisor, in the code of vorash/vora#150 as measured in that work's build
-log, a reset starts `runsc` three times. Check this again on the release you run. A member retires after
+lowers programs per second. A member retires after
 100 runs, or at the default `max_age` of 30 minutes. With `size` equal to `max_size`, its replacement
 starts only once its destroy returns. Until then a borrower waits for another member, and the wait
 shows in `startup_ms`. If nothing else is in flight when the destroy returns, the borrower starts cold

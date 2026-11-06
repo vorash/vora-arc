@@ -90,10 +90,10 @@ reset a sandbox, and that depends on the Vora you run:
 
 | Backend | What a pool with members needs |
 |---|---|
-| `bwrap` | Vora `main` has it |
-| `gvisor` | The Vora release that contains [vorash/vora#150](https://github.com/vorash/vora/pull/150). That pull request is open, so no release has it yet |
+| `bwrap` | Vora v0.10.8 or later |
+| `gvisor` | Vora v0.10.8 or later, which has [vorash/vora#150](https://github.com/vorash/vora/pull/150) |
 
-On a Vora without #150, `solve --pool` with `python-arc`, and the `warm` and `warm-no-reset` arms, get
+On an older Vora, `solve --pool` with `python-arc`, and the `warm` and `warm-no-reset` arms, get
 this at declare, so nothing runs and the command exits non-zero:
 
 ```text
