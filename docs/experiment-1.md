@@ -209,13 +209,12 @@ the name from the first lines of output.
 
 ## Run the leak tests
 
-The experiment reports leak results with its numbers, and `bench` doesn't measure them. Run these on
-the same host and backend, and keep what they write. Milestone 2 needs every row of the summary's
-leak table to say `passed`.
+The experiment reports leak results with its numbers, and `bench` doesn't measure them. Run these
+after the bench sessions, on the same host and backend, and keep what they write. Milestone 2 needs
+every row of the summary's leak table to say `passed`.
 
 1. Run the pool leak test and its no-reset control. The control skips without
-   `VORA_ADMIN_API_KEY`, `VORA_ARC_TENANT_ID` and a runner with `VORA_POOL_UNSAFE_REUSE=allow`, and a
-   skipped control shows as `not run`.
+   `VORA_ADMIN_API_KEY`, `VORA_ARC_TENANT_ID` and a runner with `VORA_POOL_UNSAFE_REUSE=allow`.
 
    ```sh
    VORA_ARC_PROFILE=profiles/python-arc-bwrap.toml uv run pytest tests/test_hostile.py \
@@ -223,31 +222,50 @@ leak table to say `passed`.
      --junitxml results/bench/leak-bwrap.xml
    ```
 
-2. Run Vora's leak suite from a Vora checkout, with the privileges its integration tests need on that
-   backend. `TestBwrapReusableLeakMatrix` is on `main`. `TestPoolLeakMatrix` and `TestLeakMatrixGvisor`
-   are in [vorash/vora#153](https://github.com/vorash/vora/pull/153), which is open, so a checkout
-   without that pull request runs only the bwrap matrix. A gVisor row that skips makes the suite show
-   as `incomplete`, not `passed`.
+2. Run Vora's leak suites from a Vora checkout, with the privileges its integration tests need on that
+   backend. The first line records which Vora ran, and the summary prints it.
 
    ```sh
-   go test -v -count=1 -tags=integration -run 'LeakMatrix' ./tests/integration/ \
-     | tee /path/to/vora-arc/results/bench/vora-leak-bwrap.log
+   { echo "vora commit: $(git rev-parse HEAD)"
+     go test -v -count=1 -tags=integration -run 'LeakMatrix|TestPoolDisconnectMidRun' ./tests/integration/ 2>&1
+   } | tee /path/to/vora-arc/results/bench/vora-leak-bwrap.log
    ```
 
-Repeat both for each backend, with its own files.
+Repeat both for each backend, with its own files. Keep each file's time if you copy it (`scp -p`):
+the summary compares it with the bench sessions.
+
+**What each backend must show.** The summary reads each report for one backend, which you name.
+
+| Backend | pytest report | Vora's log |
+|---|---|---|
+| `bwrap` | Both tests, each with `write_workspace-0`, `write_root_home-1` and `fill_tmp-2` | `TestBwrapReusableLeakMatrix`, `TestPoolLeakMatrix/bwrap`, `TestPoolDisconnectMidRun/bwrap` |
+| `gvisor` | The same | `TestLeakMatrixGvisor`, `TestPoolLeakMatrix/gvisor`, `TestPoolDisconnectMidRun/gvisor` |
+
+`TestBwrapReusableLeakMatrix` is on Vora's `main`. The rest of the log's tests are in
+[vorash/vora#153](https://github.com/vorash/vora/pull/153), which is open, so a checkout without that
+pull request can't reach `passed`. A row that runs under another backend's name doesn't count, so a
+gVisor skip in a bwrap log doesn't matter, and the same log says `incomplete` for `gvisor`.
+
+| Result | Meaning |
+|---|---|
+| `passed` | Every required test passed, the log ends in `PASS` or `ok`, and the report isn't older than the newest bench session on that backend |
+| `stale` | All of that, but the report is older than that session, so it may describe a different server. A junit report's own date counts too |
+| `incomplete` | Names what is missing, what skipped, or that the log was cut off with no final line |
+| `FAILED` | A required test failed, or the log panicked or ended in `FAIL` |
+| `not run` | No report, an unreadable one, or one that names none of the required tests |
 
 ## Rebuild the summary
 
 ```sh
 uv run vora-arc bench-summary results/bench/experiment-1-bwrap.jsonl \
-  --leak-pytest results/bench/leak-bwrap.xml --leak-vora results/bench/vora-leak-bwrap.log
+  --leak-pytest bwrap=results/bench/leak-bwrap.xml --leak-vora bwrap=results/bench/vora-leak-bwrap.log
 ```
 
 The summary reads only the files you give it, and it takes several raw files. It shows, in order:
 
 1. Verdict disagreements and hand-written solutions that didn't pass.
 2. Each arm's median and range across sessions, and the order the sessions ran in.
-3. The leak table. A suite with no report, or whose report names none of its tests, says `not run`.
+3. The leak table, with each report's date and the Vora build its log names.
 4. Each session: programs per second, p50, p90, p99, max and count for each time, then the same for
    wall-clock overall, without timeouts and per class, with each class's share of slot time.
 

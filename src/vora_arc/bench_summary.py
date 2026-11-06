@@ -8,12 +8,13 @@ import statistics
 from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
 from .client import PoolMode
 from .corpus import CandidateClass
-from .leak_report import SuiteResult, read_leak_suites
+from .leak_report import PASSED, SuiteResult, read_leak_suites
 from .model import Verdict
 from .report import DENIED_SYSCALLS_NOTE, NOT_MEASURED, blocked_net_note
 
@@ -491,7 +492,7 @@ def render_summary(raw: RawFile, leak_suites: Sequence[SuiteResult] | None = Non
         lines += [f"**{raw.unreadable_lines} lines of this file could not be read.**", ""]
     lines += _verdicts_section(raw)
     lines += _comparison(raw.arms)
-    lines += _leak_section(read_leak_suites() if leak_suites is None else leak_suites)
+    lines += _leak_section(read_leak_suites(latest_session=latest_session_by_backend(raw)) if leak_suites is None else leak_suites)
     lines += [render_arm(arm) for arm in raw.arms]
     return "\n".join(lines) + "\n"
 
@@ -557,10 +558,26 @@ def _verdict_counts(counts: dict[str, int] | None) -> str:
     return ", ".join(f"{verdict} x{count}" for verdict, count in sorted(counts.items()))
 
 
+def latest_session_by_backend(raw: RawFile) -> dict[str, datetime]:
+    latest: dict[str, datetime] = {}
+    for arm in raw.arms:
+        started = datetime.fromisoformat(arm.header.started_at)
+        latest[arm.header.backend] = max(started, latest.get(arm.header.backend, started))
+    return latest
+
+
 def _leak_section(suites: Sequence[SuiteResult]) -> list[str]:
-    lines = ["## Leak tests", "", "| Suite | Result | Passed | Failed | Skipped | Report |", "|---|---|---|---|---|---|"]
+    lines = ["## Leak tests", ""]
+    short = [suite for suite in suites if suite.status != PASSED]
+    if short:
+        lines += [f"**{len(short)} of {len(suites)} leak suites did not pass. Nothing here shows the arms don't leak until each row says `passed`.**", ""]
     lines += [
-        f"| {suite.suite} | {suite.status} | {suite.passed} | {suite.failed} | {suite.skipped} | {suite.report or 'none given'} |"
+        "| Suite | Backend | Result | Passed | Failed | Skipped | Report | Vora build |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    lines += [
+        f"| {suite.suite} | {suite.backend} | {suite.status} | {len(suite.passed)} | {len(suite.failed)} | {len(suite.skipped)} "
+        f"| {suite.report_cell} | {suite.vora_build or ''} |"
         for suite in suites
     ]
     return [*lines, ""]

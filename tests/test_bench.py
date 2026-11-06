@@ -18,6 +18,7 @@ from vora_arc import bench, cli
 from vora_arc.bench_summary import UNSAFE_LABEL, load_raw, percentiles, render_summary
 from vora_arc.client import PoolMode
 from vora_arc.corpus import CandidateClass, build_corpus, composition, load_solutions
+from vora_arc.leak_report import WRITER_CASES
 
 REVERSE = "def transform(grid):\n    return [row[::-1] for row in grid]\n"
 REVERSE_AGAIN = "def transform(grid):\n    return [list(reversed(row)) for row in grid]\n"
@@ -735,20 +736,38 @@ def test_leak_results_come_from_the_reports_given_to_the_summary(bencher: Bench,
     pytest_report = bencher.root / "leak.xml"
     pytest_report.write_text(
         '<testsuites><testsuite>'
-        '<testcase name="test_a_write_does_not_survive_into_the_next_run[write_workspace-0]"/>'
-        '<testcase name="test_without_a_reset_the_same_write_does_survive[write_workspace-0]"><skipped/></testcase>'
+        + "".join(f'<testcase name="test_a_write_does_not_survive_into_the_next_run[{case}]"/>' for case in WRITER_CASES)
+        + '<testcase name="test_without_a_reset_the_same_write_does_survive[write_workspace-0]"><skipped/></testcase>'
         "</testsuite></testsuites>"
     )
     vora_report = bencher.root / "vora.log"
-    vora_report.write_text("--- FAIL: TestPoolLeakMatrix (1.00s)\n")
+    vora_report.write_text("--- FAIL: TestLeakMatrixGvisor (1.00s)\n")
 
-    args = ["bench-summary", str(bencher.raw), "--leak-pytest", str(pytest_report), "--leak-vora", str(vora_report)]
+    args = ["bench-summary", str(bencher.raw), "--leak-pytest", f"gvisor={pytest_report}", "--leak-vora", f"gvisor={vora_report}"]
     assert cli.main(args) == 0
 
     printed = capsys.readouterr().out
-    assert f"| passed | 1 | 0 | 0 | {pytest_report} |" in printed
-    assert f"| not run | 0 | 0 | 1 | {pytest_report} |" in printed
-    assert f"| FAILED | 0 | 1 | 0 | {vora_report} |" in printed
+    assert f"| gvisor | passed | 3 | 0 | 0 | {pytest_report}, written " in printed
+    assert "| gvisor | incomplete: missing " in printed and "skipped test_without_a_reset_the_same_write_does_survive" in printed
+    assert f"| gvisor | FAILED | 0 | 1 | 0 | {vora_report}, written " in printed
+    assert "**2 of 3 leak suites did not pass." in printed
+
+
+def test_a_leak_report_older_than_the_sessions_is_flagged_next_to_them(bencher: Bench, capsys: pytest.CaptureFixture[str]) -> None:
+    assert bencher.run("warm") == 0
+    capsys.readouterr()
+    report = bencher.root / "vora.log"
+    report.write_text(
+        "--- PASS: TestLeakMatrixGvisor (1.00s)\n    --- PASS: TestPoolLeakMatrix/gvisor (1.00s)\n"
+        "    --- PASS: TestPoolDisconnectMidRun/gvisor (1.00s)\nPASS\nok  \tvora\t1.0s\n"
+    )
+    os.utime(report, (0, 0))
+
+    assert cli.main(["bench-summary", str(bencher.raw), "--leak-vora", f"gvisor={report}"]) == 0
+
+    printed = capsys.readouterr().out
+    assert "| gvisor | stale: older than the session started " in printed
+    assert "| gvisor | passed |" not in printed
 
 
 def test_denied_syscalls_and_blocked_network_never_read_as_zero(bencher: Bench) -> None:

@@ -13,11 +13,11 @@ from pathlib import Path
 import httpx
 
 from .bench import BenchSettings, run_bench
-from .bench_summary import load_raw, render_summary
+from .bench_summary import latest_session_by_backend, load_raw, render_summary
 from .client import PoolMode, connect, open_pool
 from .corpus import build_corpus, load_solutions, warmup_candidates
 from .generate import REQUEST_TIMEOUT_S, ModelConfig, ModelError, sample
-from .leak_report import read_leak_suites
+from .leak_report import BACKENDS, LeakReport, read_leak_suites
 from .model import BatchResult, Verdict
 from .pipeline import solve_task
 from .profile import load_profile
@@ -168,8 +168,17 @@ async def bench(args: argparse.Namespace) -> int:
 
 
 async def bench_summary(args: argparse.Namespace) -> int:
-    print(render_summary(load_raw(*args.raw), read_leak_suites(args.leak_pytest, args.leak_vora)), end="")
+    raw = load_raw(*args.raw)
+    suites = read_leak_suites(args.leak_pytest, args.leak_vora, latest_session_by_backend(raw))
+    print(render_summary(raw, suites), end="")
     return 0
+
+
+def _leak_report(text: str) -> LeakReport:
+    backend, _, path = text.partition("=")
+    if backend not in BACKENDS or not path:
+        raise argparse.ArgumentTypeError(f"expected BACKEND=PATH with a backend in {BACKENDS}, not {text!r}")
+    return LeakReport(backend, Path(path))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -210,10 +219,20 @@ def main(argv: list[str] | None = None) -> int:
     summarizer = commands.add_parser("bench-summary", help="rebuild the summary from raw files")
     summarizer.add_argument("raw", type=Path, nargs="+")
     summarizer.add_argument(
-        "--leak-pytest", type=Path, action="append", default=[], help="tests/test_hostile.py's --junitxml file; repeat per backend"
+        "--leak-pytest",
+        type=_leak_report,
+        action="append",
+        default=[],
+        metavar="BACKEND=PATH",
+        help="tests/test_hostile.py's --junitxml file; repeat per backend",
     )
     summarizer.add_argument(
-        "--leak-vora", type=Path, action="append", default=[], help="the go test -v output of Vora's leak suite; repeat per backend"
+        "--leak-vora",
+        type=_leak_report,
+        action="append",
+        default=[],
+        metavar="BACKEND=PATH",
+        help="the go test -v output of Vora's leak suites; repeat per backend",
     )
     reporter = commands.add_parser("report", help="write a logged run's Markdown report and charts")
     reporter.add_argument("--run", required=True, help="run id printed by solve")
