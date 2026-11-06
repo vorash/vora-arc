@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import ast
-import builtins
 import json
 import os
 import subprocess
@@ -13,6 +12,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from host_safety import host_safety_failures, programs_for_the_host, violations
 
 from vora_arc.client import _batch_result, _Collector, batch_request
 from vora_arc.corpus import (
@@ -40,6 +40,7 @@ SOLUTIONS = load_solutions(ROOT / "solutions")
 PER_INPUT_TIMEOUT_MS = 1000
 
 needs_data = pytest.mark.skipif(not TRAINING.is_dir(), reason="ARC data not downloaded; run scripts/download_data.sh")
+runs_on_the_host = pytest.mark.usefixtures("host_safe_programs")
 
 
 def corpus(candidates: int = 2000, seed: int = 1) -> Corpus:
@@ -156,21 +157,40 @@ def test_a_missing_transform_candidate_has_no_transform_function() -> None:
         assert not any(isinstance(node, ast.FunctionDef) and node.name == "transform" for node in tree.body)
 
 
-def test_nothing_in_the_corpus_reaches_outside_its_process() -> None:
-    # Hostile programs live in the hostile suite. This corpus must be safe to measure with.
-    unsafe_names = {"open", "exec", "eval", "compile", "__import__", "input", "os", "sys", "subprocess", "socket"}
-    for candidate in corpus(10_000).candidates:
-        if candidate.candidate_class is CandidateClass.SYNTAX_ERROR:
-            continue
-        tree = ast.parse(candidate.program)
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                assert [alias.name for alias in node.names] == ["time"], candidate.program
-            assert not isinstance(node, ast.ImportFrom), candidate.program
-            if isinstance(node, ast.Name):
-                assert node.id not in unsafe_names, candidate.program
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and hasattr(builtins, node.func.id):
-                assert node.func.id not in unsafe_names, candidate.program
+def test_every_program_a_host_test_can_reach_is_on_the_allowlist() -> None:
+    # Hostile programs live in the hostile suite. These run outside any sandbox when data/ is present.
+    assert host_safety_failures(programs_for_the_host()) == {}
+
+
+@pytest.mark.parametrize(
+    "program",
+    [
+        "import os\n",
+        "import time as os\n",
+        "from time import sleep\n",
+        "import time\ntime.sleep(1)\n",
+        "import time\nclock = time.time\n",
+        "exec('1')\n",
+        "eval('1')\n",
+        "open('/etc/passwd')\n",
+        "getattr(int, 'real')\n",
+        "reader = open\n",
+        "__import__('os')\n",
+        "().__class__\n",
+        "def __getattr__(name):\n    pass\n",
+        "row.copy()\n",
+        "grid[0]()\n",
+        "(lambda: 1)()\n",
+        "class Hidden:\n    pass\n",
+        "with grid:\n    pass\n",
+    ],
+)
+def test_the_allowlist_refuses_what_it_does_not_name(program: str) -> None:
+    assert violations(program)
+
+
+def test_a_program_that_does_not_parse_runs_nothing_so_it_passes_the_allowlist() -> None:
+    assert violations("import os\ndef transform(grid)\n") == []
 
 
 def test_warmup_is_hand_written_and_does_not_depend_on_the_corpus() -> None:
@@ -182,6 +202,7 @@ def test_warmup_is_hand_written_and_does_not_depend_on_the_corpus() -> None:
 
 
 def verdict_from_the_real_runner(candidate: Candidate) -> Verdict:
+    assert not violations(candidate.program), f"candidate {candidate.index} must not run on the host"
     profile = replace(load_profile(), per_input_timeout_ms=PER_INPUT_TIMEOUT_MS)
     task = load_task(TRAINING / f"{candidate.task_id}.json")
     stdin, is_test = batch_request(profile, candidate.program, task)
@@ -207,6 +228,7 @@ def verdict_from_the_real_runner(candidate: Candidate) -> Verdict:
 
 
 @needs_data
+@runs_on_the_host
 @pytest.mark.parametrize(
     ("name", "allowed"),
     [
@@ -229,6 +251,7 @@ def test_each_class_earns_the_verdict_it_is_there_for_from_the_real_runner(name:
 
 
 @needs_data
+@runs_on_the_host
 def test_mutants_really_execute_and_mostly_fail_on_their_answer_not_on_loading() -> None:
     verdicts = Counter(verdict_from_the_real_runner(candidate) for candidate in of_class(corpus(400), CandidateClass.MUTATED)[:40])
 
