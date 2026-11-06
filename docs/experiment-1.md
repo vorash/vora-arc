@@ -363,8 +363,9 @@ log, a reset starts `runsc` three times. Check this again on the release you run
 100 runs, or at the default `max_age` of 30 minutes. With `size` equal to `max_size`, its replacement
 starts only once its destroy returns. Until then a borrower waits for another member, and the wait
 shows in `startup_ms`. If nothing else is in flight when the destroy returns, the borrower starts cold
-instead and the run counts as cold ([Why a warm arm can run cold](#what-a-runs-result-means)). About
-1 in 100 runs lands on this path, so `warm`'s p99 sits at its edge. Every arm sets `borrow_timeout_ms`
+instead and the run counts as cold ([Why a warm arm can run cold](#what-a-runs-result-means)). With
+`max_runs` 100, about 1 run in 100 follows a retirement, so `warm`'s p99 can sit on this path. That is
+arithmetic, not a measurement. Every arm sets `borrow_timeout_ms`
 to 60 seconds, so a slow replacement shows as a slow run. A longer wait is a refusal, and that is an
 infrastructure failure.
 

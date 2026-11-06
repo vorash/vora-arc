@@ -628,7 +628,7 @@ def test_ordinary_programs_lead_and_leave_the_expensive_classes_out(bencher: Ben
     text = render_summary(load_raw(bencher.raw))
     for name in CandidateClass:
         assert f"| {name.value} | " in text
-    first, _ = text.split("All classes, expensive ones included.", 1)
+    first, _ = text.split("All classes. The expensive ones", 1)
     assert "Ordinary programs are every class but memory_hungry, slow, timeout." in first
     assert "10000.0" not in table_row(first, "| warm | 1 | 37 |"), "the first table has no expensive run in it"
     assert "| warm | 1 | 40 |" in text and "10000.0" in table_row(text, "| warm | 1 | 40 |")

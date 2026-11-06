@@ -746,7 +746,8 @@ def _comparison(arms: Sequence[ArmSummary]) -> list[str]:
         "",
         *_wall_table(by_arm, lambda arm: arm.ordinary, lambda arm: arm.ordinary_values),
         "",
-        "All classes, expensive ones included. Their under 1% sits just inside the slowest 1%, so this p99 is a near-worst run.",
+        "All classes. The expensive ones are under 1% of the runs, so when they are the slowest they fill most of the slowest 1%, "
+        "and this p99 is then a near-worst run.",
         "",
         *_wall_table(by_arm, lambda arm: arm.wall, lambda arm: arm.wall_values),
         "",
