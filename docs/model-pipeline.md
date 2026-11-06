@@ -100,10 +100,14 @@ Run it with `uv run pytest -m sandbox`.
 - Any accuracy, generation time or cost figure.
 - The request shape on vLLM itself: `/chat/completions` with `n` up to 16.
 
-## Not verified on a real pool yet
+## Verified on a real pool
 
-`solve --pool` and `vora-arc bench` have run only against a fake of Vora's pool routes
-(`tests/fake_pools.py`). See [About warm pools](pools.md) and
-[How to run experiment 1](experiment-1.md). The dashboard's pool panels use the names in
-Vora's `internal/telemetry/metrics.go`, and `tests/test_dashboard.py` checks them against
-that file, but no panel has shown real data yet.
+`vora-arc bench` ran on real pools for [experiment 1](experiment-1-results.md), and `solve --pool` runs on
+real pools in `tests/test_solve_e2e.py`, both on vora-mini under both backends. See
+[About warm pools](pools.md).
+
+The dashboard's pool panels use the names in Vora's `internal/telemetry/metrics.go`, and
+`tests/test_dashboard.py` checks them against that file. While a pool ran on vora-mini, the runner served
+those series with real values on both backends, except `vora_pool_retired_total` and
+`vora_pool_not_loaded`, which didn't appear at that moment. Vora removes a pool's series when the pool is
+deleted. No Grafana has drawn these panels yet.
