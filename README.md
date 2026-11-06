@@ -9,7 +9,7 @@ raw results; this package decides which programs are correct.
 
 Mistral 7B solved none of the first 100 ARC-AGI-1 evaluation tasks at 64 samples per task. The same pipeline
 solved 7 of 12 hand-picked simple tasks, so the zero comes from the model and its plain prompt. Generation set
-the run's length: sandboxes needed at most about 1.7% of it. [The results document](docs/experiments-2-3-results.md)
+the run's length: sandbox time would be 13% of it even if no two sandboxes overlapped. [The results document](docs/experiments-2-3-results.md)
 has the method, the limits and what wasn't measured.
 
 | Tasks | Samples per task | Solved | Programs that passed train pairs | GPU time, cost |
