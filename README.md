@@ -17,6 +17,10 @@ are no accuracy or cost results yet. See [docs/model-pipeline.md](docs/model-pip
 for what is verified and what isn't, and [docs/milestone-1.md](docs/milestone-1.md)
 for the harness.
 
+**No pool result exists either.** `solve --pool` and `vora-arc bench` are built and have
+run only against a fake of Vora's pool routes. See [docs/pools.md](docs/pools.md), and
+[docs/experiment-1.md](docs/experiment-1.md) for how to run the experiment.
+
 ## Run it
 
 ```sh
@@ -32,7 +36,8 @@ GPU_EUR_PER_HOUR=<price> uv run vora-arc report --run <run id printed by solve>
 ```
 
 `VORA_MAX_CONCURRENCY` caps the sandboxes running at once (default 8). The report
-goes to `results/<run id>/`.
+goes to `results/<run id>/`. Add `--pool` to run programs on a warm pool of that size
+instead of a fresh sandbox each.
 
 ## Test it
 
