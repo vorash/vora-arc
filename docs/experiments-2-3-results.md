@@ -3,7 +3,7 @@
 Mistral 7B solved none of the first 100 ARC-AGI-1 evaluation tasks at 64 samples per task, and none of
 its 6,378 programs passed a task's train pairs. On 12 hand-picked simple tasks, the same pipeline solved
 7, so the zero comes from the model and its prompt, not from the pipeline. The run cost 2.87 EUR, and
-generation set its length: sandboxes needed at most about 1.7% of its wall-clock.
+generation set its length: sandbox time would be 13% of the wall-clock even if no two sandboxes overlapped.
 
 These are single runs of one small model with a plain prompt on one rented GPU. They don't describe what
 other models or prompts can do, or what other hardware can do. The L4 was chosen for its cost.
@@ -92,7 +92,8 @@ task's best went from 0.583 to 0.601.
 ## Experiment 3: where time and money go
 
 **Generation sets the run's length.** In the 100-task run, sandboxes spent 1,756 s on startup, execution and
-reset. Spread over 8 slots, that is at least 219 s of a 13,141 s run, or 1.7%. The run asked for 0.48 programs
+reset, against a wall-clock of 13,141 s. That share is 13% if they never overlapped and 1.7% if all 8 slots
+were always busy. The run asked for 0.48 programs
 per second, about 1% of the 44.1 per second that [experiment 1](experiment-1-results.md) measured for a warm
 gVisor pool on the same host, with no tunnel. The GPU averaged 99.8% busy.
 
@@ -144,6 +145,9 @@ stopping the run. Vora reported `POOL_RESET_FAILED` after all 35 of those memory
 - **Time with a request open.** Tasks overlapped, so reports give that lower bound as not measured.
 - **The start of the ARC-AGI-2 run's timing.** A 30,000-token probe of mine with 16 samples sat on the model
   for up to 60 s just after that run began. It can't have changed the accuracy, and it's small against 4,035 s.
+- **Prompts near the limit.** vLLM refused prompts over 32,768 tokens. Two refinement prompts in the first 20
+  tasks, on `0934a4d8` and `09c534e7`, were under that limit but left less than 4,096 tokens for output. I didn't
+  check how vLLM handled those requests.
 - **The benchmark's setting.** The benchmark table for this server was measured with `--max-model-len 8192`.
   These runs used 32768. The KV cache was 45,136 tokens before that change and 45,120 after it.
 
