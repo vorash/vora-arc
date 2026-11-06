@@ -2,11 +2,11 @@
 
 Mistral 7B solved none of the first 100 ARC-AGI-1 evaluation tasks at 64 samples per task, and none of
 its 6,378 programs passed a task's train pairs. On 12 hand-picked simple tasks, the same pipeline solved
-7, so the zero comes from the model and its prompt, not from the pipeline. The run cost 2.87 EUR, and
-generation set its length: sandbox time would be 13% of the wall-clock even if no two sandboxes overlapped.
+7, so the zero comes from the model and its prompt, not from the pipeline. The run cost 2.87 EUR. Sandbox
+time would be 13% of the wall-clock even if no two sandboxes overlapped, so generation set the run's length.
 
 These are single runs of one small model with a plain prompt on one rented GPU. They don't describe what
-other models or prompts can do, or what other hardware can do. The L4 was chosen for its cost.
+other models or prompts can do, or what other hardware can do. I chose the L4 for its cost.
 
 ## Setup
 
@@ -71,7 +71,7 @@ The counts below are the first k samples of each task, re-voted, so they come fr
 | 64 | 0 / 100 | 7 / 12 |
 | 128 | not measured | not measured |
 
-128 samples weren't run because they would double the generation time, which I estimate at about 7.3 hours
+I didn't run 128 samples because they would double the generation time, to about 7.3 hours by my estimate
 for the same 100 tasks. The control is the only run where the count changed anything.
 
 Refinement ran on 20 tasks and solved none, so this experiment can't say whether it helps. One task,
@@ -106,7 +106,7 @@ Startup has a p50 of 14 ms. Each program also waited about 0.9 s on average for 
 task's programs arrive together.
 
 **Longer prompts slow generation.** Across the five runs, output throughput falls as prompt tokens per sample
-rise, and at 2,330 tokens and above the KV cache stays over 70% full. This is an association across
+rise, and at 2,330 tokens and above, the KV cache stays over 70% full. This is an association across
 single runs with different tasks, not a controlled test. The rate at the top is above the 490 tokens/s
 that the server's benchmark reached at saturation with a separate prompt per request. I didn't isolate why.
 My guess is that samples of one prompt share its blocks and its processing.
@@ -124,8 +124,8 @@ report, so they are close but not exact. Preemptions count requests that lost th
 to start again. In the 100-task run, 162 samples (2.5%) ran to the 4,096-token limit. I estimate they took
 about 16% of the output tokens, since 162 × 4,096 is about 664,000 of 4.06 million.
 
-**Money.** The 100-task run cost 0.029 EUR per task, or 131 s of GPU per task with 8 tasks at once. All 400
-evaluation tasks would take about 14.6 hours and 11.50 EUR by extrapolation; that wasn't run. The machine
+**Money.** The 100-task run cost 0.029 EUR per task, or 131 s of GPU per task with 8 tasks at once. By extrapolation, all 400
+evaluation tasks would take about 14.6 hours and 11.50 EUR. That wasn't run. The machine
 ran for 439 minutes, about 5.76 EUR at the listed price, which I haven't compared with an invoice. Of that,
 the five runs account for 4.77 EUR. Setup, the benchmark and a trial took the rest.
 
@@ -143,7 +143,7 @@ stopping the run. Vora reported `POOL_RESET_FAILED` after all 35 of those memory
 - **Repeats.** Each configuration ran once, and sampling isn't seeded, so a new run will write different
   programs.
 - **Time with a request open.** Tasks overlapped, so reports give that lower bound as not measured.
-- **The start of the ARC-AGI-2 run's timing.** A 30,000-token probe of mine with 16 samples sat on the model
+- **The start of the ARC-AGI-2 run's timing.** A 30,000-token probe of mine with 16 samples occupied the model
   for up to 60 s just after that run began. It can't have changed the accuracy, and it's small against 4,035 s.
 - **Prompts near the limit.** vLLM refused prompts over 32,768 tokens. Two refinement prompts in the first 20
   tasks, on `0934a4d8` and `09c534e7`, were under that limit but left less than 4,096 tokens for output. I didn't

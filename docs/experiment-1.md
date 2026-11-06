@@ -33,7 +33,7 @@ its candidate's index, class, task and `program_sha256`.
 | `memory_hungry` | 0.30% | A solution that touches 64 to 96 MiB per input | Pages used, then freed | `passed` |
 | `timeout` | 0.10% | A solution followed by a loop that never ends | One per-input timeout, then the runner gives up | `timeout` |
 
-**Why this mix.** The mix moves every number, so compare arms only on one corpus. A fast failure
+**Why this mix.** The mix affects every number, so compare arms only on one corpus. A fast failure
 spends almost nothing in the program, which leaves startup and reset to dominate. A slow program does
 the opposite. The experiment asks what isolation costs a program that really runs, so 84.9% of this
 corpus (everything but `syntax_error`, `missing_transform` and `timeout`) calls `transform` on every
@@ -47,8 +47,8 @@ overall p99 is the 3rd slowest of the 1,982 ordinary runs. So the summary leads 
 programs** row that leaves those three classes out. They show in the all-classes row, in their own rows
 and in the share of slot time.
 
-**How little a session's p99 rests on.** A nearest-rank p99 over one session of 2,000 rests on about 20
-runs, so one or two slow runs move it. The summary shows a p99 pooled across the complete sessions of an
+**How few runs a session's p99 depends on.** A nearest-rank p99 over one session of 2,000 depends on about 20
+runs, so one or two slow runs change it. The summary shows a p99 pooled across the complete sessions of an
 arm next to the range of each session's own p99. Read both.
 
 **Why a timeout doesn't dominate.** A loop in `transform` costs one per-input timeout per input, and
@@ -70,12 +70,12 @@ You need:
 
 - A Vora server with pools, on a host that has spare capacity for `max_size` sandboxes per arm. Vora
   reserves CPU and memory for all of `max_size` when a pool is declared, so the `cold` arm needs room
-  for twice the concurrency. If the runner hasn't got it, the declare is refused and `bench` exits
+  for twice the concurrency. If the runner doesn't have that room, the declare is refused and `bench` exits
   with the API's message. Lower `--concurrency` on every arm.
 - For `warm` and `warm-no-reset` on gVisor, Vora v0.10.8 or later, which has
-  [vorash/vora#150](https://github.com/vorash/vora/pull/150). Before that the declare is refused with `backend cannot reset sandboxes`, `bench` exits with that
+  [vorash/vora#150](https://github.com/vorash/vora/pull/150). Before that, the declare is refused with `backend cannot reset sandboxes`, `bench` exits with that
   message, and the summary lists the session as incomplete. `cold` still runs there, so a gVisor
-  summary with only `cold` numbers means this. See
+  summary with only `cold` numbers means that the declare was refused. See
   [What a pool asks of a profile](pools.md#what-a-pool-asks-of-a-profile).
 - The image: run `sandbox/build.sh` on the host.
 - The data: run `scripts/download_data.sh`.
@@ -114,10 +114,10 @@ These checks need the host, because the API doesn't report them.
    ```
 
 2. Check that the runner resolves the image through containerd. In `auto` mode the runner tries
-   containerd again every 5 minutes for an image that only the local cache has
-   ([vorash/vora#148](https://github.com/vorash/vora/issues/148), fixed in v0.10.8; before that it
-   tried on every start). Each try spends seconds on the start that makes it, which would inflate the
-   `cold` arm. The API can't show this: the `image_rootfs` field exists, and nothing fills it.
+   containerd again every 5 minutes for an image that only the local cache has. Before the fix in
+   v0.10.8 ([vorash/vora#148](https://github.com/vorash/vora/issues/148)), it tried on every start.
+   Each try spends seconds on the start that makes it, which would inflate the `cold` arm. The API
+   can't show the image's source: the `image_rootfs` field exists, and nothing fills it.
 
    This command is for a containerd that runs as root. For a rootless one, drop `sudo` and pass
    `--address "$XDG_RUNTIME_DIR/containerd/containerd.sock"`.
@@ -167,9 +167,8 @@ keeps three things apart:
 | Wrong reuse mode | A run reported a reuse mode its arm doesn't use | Counted. The command exits 1 |
 | Program verdict | What `verify` said about the candidate, by candidate index | Reported per class. Doesn't affect the exit code |
 
-**Why a warm arm can run cold.** When a member retires and its destroy returns, Vora gives the freed
-slot to the first waiter as a cold start if nothing else is in flight, and that run reports `warm`
-false. So a healthy warm arm has at most one cold run per retirement. A member retires only after
+**Why a warm arm can run cold.** When a member retires, its destroy returns and nothing else is in
+flight, Vora gives the freed slot to the first waiter as a cold start. That run reports `warm` false. So a healthy warm arm has at most one cold run per retirement. A member retires only after
 `max_runs` runs, warmup included, so the bound is `(candidates + warmup) // max_runs`: 20 for 2,000
 candidates, 24 warmup runs and `max_runs` 100. A session long enough to reach `max_age` also gets
 `concurrency` more per 30 minutes. Above the bound the arm really is running cold. Each session prints
@@ -201,8 +200,8 @@ order rotates from round to round, so that drift on the host affects all three. 
 run 10,000 candidates on each arm, and those counts match the mix exactly. Use one raw file per
 backend, because a summary compares every session in its file.
 
-Set `CONCURRENCY` to at most half the runner's CPUs: each sandbox has one CPU, and the `cold` arm
-reserves twice the concurrency.
+Set `CONCURRENCY` to at most half the runner's CPUs, because each sandbox has one CPU and the `cold`
+arm reserves twice the concurrency.
 
 ```sh
 RAW=results/bench/experiment-1-bwrap.jsonl
@@ -222,10 +221,10 @@ for round in 1 2 3 4 5; do
 done
 ```
 
-`settle` waits for the 1-minute load to fall to the level the summary's "this machine was busy" warning
-fires above, a quarter of the CPUs. A session at this concurrency leaves the load near half the CPUs, so
+`settle` waits for the 1-minute load to fall to a quarter of the CPUs, the level above which the summary's
+"this machine was busy" warning fires. A session at this concurrency leaves the load near half the CPUs, so
 without the wait most sessions would start under that warning, and it would stop meaning anything. By
-the load average's decay this takes under a minute on an otherwise idle host. That is arithmetic, not a
+the load average's decay, the wait takes under a minute on an otherwise idle host. That is arithmetic, not a
 measurement. If `settle` doesn't end, something else is using the host.
 
 The summary records the order the sessions ran in, so you can check the rotation. To run one session
@@ -234,7 +233,7 @@ of the spec's full size, omit `--candidates`: it defaults to 10,000. `--warmup` 
 no candidate index.
 
 **How long it takes.** This is an estimate, and this page has no figure because nothing has been
-measured. Read the `cold` arm's programs per second from the smoke run above, call it `R`. Then:
+measured. Read the `cold` arm's programs per second from the smoke run above, and call it `R`. Then:
 
 ```text
 10,000 candidates on the cold arm = 10,000 / R seconds
@@ -311,11 +310,11 @@ uv run vora-arc bench-summary results/bench/experiment-1-bwrap.jsonl \
 ```
 
 The summary reads only the files you give it, and it takes several raw files. A raw file appends, so
-it can hold sessions you didn't mean to mix: the summary says when sessions differ in host, commit,
+it can hold sessions you didn't mean to mix. The summary says when sessions differ in host, commit,
 dirty state, server version, memory or warmup. It shows, in order:
 
-1. Candidates that differ in verdict or outputs, safe arms apart from no-reset, and hand-written
-   solutions that didn't pass.
+1. Candidates that differ in verdict or outputs, with the safe arms listed apart from the no-reset arm,
+   and hand-written solutions that didn't pass.
 2. The leak table, with each report's date and the Vora build its log names.
 3. For each arm, over its complete sessions: ordinary programs first and then all classes, each with
    p50, p90, p99, max and count pooled across sessions, and the range of each session's p50 and p99.
@@ -329,7 +328,7 @@ Percentiles are nearest-rank, over the runs with a verdict. Programs per second 
 verdict divided by the measured phase's wall time, which excludes warmup, at the recorded concurrency.
 
 Vora leaves out `startup_ms` and `reset_ms` under 1 ms, so their percentiles cover only the slower runs.
-The count that left it out sits next to them, and a row with more left out than reported shows
+The count of runs that left it out appears next to them, and a row with more left out than reported shows
 `under half reported` instead of a percentile. The client's own startup time has no such gap.
 
 A reset failure retires its member, and the next run can still report warm on a new one, so it doesn't
@@ -365,7 +364,7 @@ lowers programs per second. A member retires after
 starts only once its destroy returns. Until then a borrower waits for another member, and the wait
 shows in `startup_ms`. If nothing else is in flight when the destroy returns, the borrower starts cold
 instead and the run counts as cold ([Why a warm arm can run cold](#what-a-runs-result-means)). With
-`max_runs` 100, about 1 run in 100 follows a retirement, so `warm`'s p99 can sit on this path. That is
+`max_runs` 100, about 1 run in 100 follows a retirement, so this path can set `warm`'s p99. That is
 arithmetic, not a measurement. Every arm sets `borrow_timeout_ms`
 to 60 seconds, so a slow replacement shows as a slow run. A longer wait is a refusal, and that is an
 infrastructure failure.

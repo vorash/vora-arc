@@ -15,7 +15,7 @@ One JSON object:
 }
 ```
 
-Inputs are train inputs first (index 0..n-1), then test inputs.
+Inputs are train inputs first (index 0 to n-1), then test inputs.
 
 ## stdout
 
@@ -42,6 +42,6 @@ Then one final line:
 `stderr_tail` is the last 4 KB of everything the program wrote to stdout or
 stderr.
 
-Lines are streamed so a client keeps every finished result when Vora kills
-the whole batch (timeout, OOM). A batch with no final line was killed;
-inputs with no result line take their status from the kill reason.
+The runner streams lines so a client keeps every finished result when Vora kills
+the whole batch (timeout, OOM). A batch with no final line was killed.
+Inputs with no result line take their status from the kill reason.
