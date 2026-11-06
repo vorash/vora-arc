@@ -41,6 +41,10 @@ class ModelError(Exception):
     """The model endpoint would not produce completions, even after retries."""
 
 
+class PromptTooLong(ModelError):
+    """The model refused this prompt for its size, so asking again can't help."""
+
+
 class _TransientResponse(Exception):
     pass
 
@@ -219,7 +223,8 @@ def _completions(response: httpx.Response) -> list[str]:
     if status != 200:
         # The body can be a proxy's HTML error page, and can quote the URL it was asked for.
         body = " ".join(redact_userinfo(response.text).split())[:500]
-        raise ModelError(f"{response.url}: HTTP {status}: {body}")
+        refused = PromptTooLong if status == 400 and "maximum context length" in body else ModelError
+        raise refused(f"{response.url}: HTTP {status}: {body}")
     try:
         texts: list[Any] = [choice["message"]["content"] for choice in response.json()["choices"]]
     except (ValueError, KeyError, TypeError) as error:
