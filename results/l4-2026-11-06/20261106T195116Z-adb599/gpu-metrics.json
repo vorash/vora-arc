@@ -1,0 +1,246 @@
+{
+ "window": {
+  "start": "2026-11-06T19:51:16+00:00",
+  "end": "2026-11-06T19:57:39+00:00"
+ },
+ "queries": {
+  "generation_tokens": "sum(increase(vllm:generation_tokens_total[383s]))",
+  "prompt_tokens": "sum(increase(vllm:prompt_tokens_total[383s]))",
+  "preemptions": "sum(increase(vllm:num_preemptions_total[383s]))",
+  "finished_by_reason": "sum by (finished_reason) (increase(vllm:request_success_total[383s]))",
+  "running_avg": "avg_over_time(vllm:num_requests_running[383s])",
+  "waiting_avg": "avg_over_time(vllm:num_requests_waiting[383s])",
+  "waiting_max": "max_over_time(vllm:num_requests_waiting[383s])",
+  "kv_cache_avg": "avg_over_time(vllm:kv_cache_usage_perc[383s])",
+  "gpu_util_avg": "avg_over_time(DCGM_FI_DEV_GPU_UTIL[383s])",
+  "gpu_power_w_avg": "avg_over_time(DCGM_FI_DEV_POWER_USAGE[383s])",
+  "gpu_energy_mj_increase": "increase(DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION[383s]) / 1e9",
+  "generation_tok_per_s": "sum(rate(vllm:generation_tokens_total[5m]))",
+  "running": "avg_over_time(vllm:num_requests_running[5m])",
+  "waiting": "avg_over_time(vllm:num_requests_waiting[5m])",
+  "kv_cache": "avg_over_time(vllm:kv_cache_usage_perc[5m])",
+  "preemptions_per_min": "sum(rate(vllm:num_preemptions_total[5m])) * 60",
+  "gpu_util": "avg_over_time(DCGM_FI_DEV_GPU_UTIL[5m])"
+ },
+ "totals": {
+  "generation_tokens": {
+   "value": 241994.72
+  },
+  "prompt_tokens": {
+   "value": 246296.576
+  },
+  "preemptions": {
+   "value": 0.0
+  },
+  "finished_by_reason": {
+   "stop": 783.363,
+   "length": 0.0,
+   "abort": 0.0,
+   "error": 0.0,
+   "repetition": 0.0
+  },
+  "running_avg": {
+   "value": 46.934
+  },
+  "waiting_avg": {
+   "value": 0.0
+  },
+  "waiting_max": {
+   "value": 0.0
+  },
+  "kv_cache_avg": {
+   "value": 0.279
+  },
+  "gpu_util_avg": {
+   "value": 97.403
+  },
+  "gpu_power_w_avg": {
+   "value": 71.011
+  },
+  "gpu_energy_mj_increase": {
+   "value": 0.028
+  }
+ },
+ "series": {
+  "generation_tok_per_s": [
+   [
+    1793994676,
+    "93.14237288135593"
+   ],
+   [
+    1793994736,
+    "226.66440677966102"
+   ],
+   [
+    1793994796,
+    "299.4338983050847"
+   ],
+   [
+    1793994856,
+    "435.6949152542373"
+   ],
+   [
+    1793994916,
+    "557.1864406779661"
+   ],
+   [
+    1793994976,
+    "670.2101694915254"
+   ],
+   [
+    1793995036,
+    "638.1389830508474"
+   ]
+  ],
+  "running": [
+   [
+    1793994676,
+    "11.883333333333333"
+   ],
+   [
+    1793994736,
+    "20.383333333333333"
+   ],
+   [
+    1793994796,
+    "22.866666666666667"
+   ],
+   [
+    1793994856,
+    "32.35"
+   ],
+   [
+    1793994916,
+    "41.15"
+   ],
+   [
+    1793994976,
+    "50.516666666666666"
+   ],
+   [
+    1793995036,
+    "46.266666666666666"
+   ]
+  ],
+  "waiting": [
+   [
+    1793994676,
+    "5.85"
+   ],
+   [
+    1793994736,
+    "0"
+   ],
+   [
+    1793994796,
+    "0"
+   ],
+   [
+    1793994856,
+    "0"
+   ],
+   [
+    1793994916,
+    "0"
+   ],
+   [
+    1793994976,
+    "0"
+   ],
+   [
+    1793995036,
+    "0"
+   ]
+  ],
+  "kv_cache": [
+   [
+    1793994676,
+    "0.5725611919120256"
+   ],
+   [
+    1793994736,
+    "0.4752749201844626"
+   ],
+   [
+    1793994796,
+    "0.3502660517914154"
+   ],
+   [
+    1793994856,
+    "0.30890977888140003"
+   ],
+   [
+    1793994916,
+    "0.27529265697055694"
+   ],
+   [
+    1793994976,
+    "0.2984391628236963"
+   ],
+   [
+    1793995036,
+    "0.2854794844507509"
+   ]
+  ],
+  "preemptions_per_min": [
+   [
+    1793994676,
+    "0"
+   ],
+   [
+    1793994736,
+    "0"
+   ],
+   [
+    1793994796,
+    "0"
+   ],
+   [
+    1793994856,
+    "0"
+   ],
+   [
+    1793994916,
+    "0"
+   ],
+   [
+    1793994976,
+    "0"
+   ],
+   [
+    1793995036,
+    "0"
+   ]
+  ],
+  "gpu_util": [
+   [
+    1793994676,
+    "93.33333333333333"
+   ],
+   [
+    1793994736,
+    "90"
+   ],
+   [
+    1793994796,
+    "90"
+   ],
+   [
+    1793994856,
+    "90"
+   ],
+   [
+    1793994916,
+    "90"
+   ],
+   [
+    1793994976,
+    "96.66666666666667"
+   ],
+   [
+    1793995036,
+    "100"
+   ]
+  ]
+ }
+}
