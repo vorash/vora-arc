@@ -6,7 +6,7 @@ import json
 import math
 import statistics
 from collections import Counter
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from .client import PoolMode
-from .corpus import CandidateClass
+from .corpus import EXPENSIVE_CLASSES, CandidateClass
 from .leak_report import FAILED, PASSED, SuiteResult, read_leak_suites
 from .model import Verdict
 from .report import DENIED_SYSCALLS_NOTE, NOT_MEASURED, blocked_net_note
@@ -23,6 +23,9 @@ UNSAFE_LABEL = "UNSAFE: no reset between runs, an experimental control only"
 BUSY_LOAD_PER_CPU = 0.25
 MIN_SESSIONS = 5
 VORA_DEFAULT_MAX_AGE_S = 1800
+CLIENT_CPU_WARN_SHARE = 0.5
+RESET_FAILED = "POOL_RESET_FAILED"
+UNDER_HALF_REPORTED = "under half reported"
 IMAGE_UNCONFIRMED = "unconfirmed, and the cold arm may carry a registry attempt on every start (vorash/vora#148)"
 
 _REQUIRED_WARM = {PoolMode.COLD: False, PoolMode.WARM: True, PoolMode.WARM_NO_RESET: True}
@@ -33,6 +36,9 @@ _REQUIRED_REUSE = {
 }
 
 Phase = Literal["warmup", "measured"]
+
+
+ORDINARY_ROW = f"Ordinary programs (all but {', '.join(sorted(EXPENSIVE_CLASSES))})"
 
 
 def arm_label(arm: PoolMode) -> str:
@@ -129,7 +135,8 @@ class BenchFooter:
     completed: bool
     pool_ready_ms: float | None
     measured_seconds: float | None
-    client_cpu_seconds: float
+    client_cpu_seconds: float | None
+    """The measured window only: warmup and the pool's delete aren't what could limit the numbers."""
     load_end: tuple[float, float, float]
 
 
@@ -202,6 +209,7 @@ class ArmSummary:
     off_shape_bound: int
     wrong_reuse: int
     reset_outcomes: dict[str, int]
+    reset_failures: int
     retire_causes: dict[str, int]
     """What each run's check-in retired its member for. A member that retired while idle shows on no run."""
     sandboxes: int
@@ -209,7 +217,11 @@ class ArmSummary:
     """Runs that were their sandbox's first. A healthy warm arm has one per member."""
     longest_sandbox_run: int | None
     wall: Percentiles
-    wall_without_timeouts: Percentiles
+    ordinary: Percentiles
+    """Wall-clock of every class but the expensive ones."""
+    wall_values: tuple[float | None, ...]
+    ordinary_values: tuple[float | None, ...]
+    reset_values: tuple[int | None, ...]
     client_startup: Percentiles
     startup: Percentiles
     execution: Percentiles
@@ -225,6 +237,18 @@ class ArmSummary:
     def broken(self) -> bool:
         """On the no-reset arm a leak can legitimately fail a good program, which is a finding."""
         return bool(self.hand_written_not_passed) and self.arm is not PoolMode.WARM_NO_RESET
+
+    @property
+    def complete(self) -> bool:
+        """A killed session or one with lost lines covers only part of its corpus, so its range means nothing."""
+        return self.footer is not None and self.footer.completed and self.measured == self.planned
+
+    @property
+    def client_cpu_share(self) -> float | None:
+        footer = self.footer
+        if footer is None or footer.client_cpu_seconds is None or not footer.measured_seconds:
+            return None
+        return footer.client_cpu_seconds / footer.measured_seconds
 
     @property
     def off_shape_exceeded(self) -> bool:
@@ -332,6 +356,7 @@ def summarize(rows: _ArmRows) -> ArmSummary:
     framed = [run for run in measured if run.warm is not None]
     seconds = rows.footer.measured_seconds if rows.footer else None
     slot_ms = seconds * 1000 * rows.header.concurrency if seconds else None
+    ordinary = [run for run in judged if run.candidate_class not in EXPENSIVE_CLASSES]
     return ArmSummary(
         header=rows.header,
         footer=rows.footer,
@@ -361,14 +386,16 @@ def summarize(rows: _ArmRows) -> ArmSummary:
         off_shape_bound=off_shape_bound(rows.header, rows.footer),
         wrong_reuse=sum((run.reuse or "POOL_REUSE_RESET") != _REQUIRED_REUSE[arm] for run in framed),
         reset_outcomes=dict(Counter(run.reset_outcome or "not reported" for run in framed)),
+        reset_failures=sum(run.reset_outcome == RESET_FAILED for run in framed),
         retire_causes=dict(Counter(run.retire_cause for run in framed if run.retire_cause)),
         sandboxes=len({run.sandbox_id for run in framed if run.sandbox_id}),
         first_runs=sum(run.sandbox_run == 1 for run in framed),
         longest_sandbox_run=max((run.sandbox_run for run in framed if run.sandbox_run is not None), default=None),
         wall=percentiles(run.wall_ms for run in judged),
-        wall_without_timeouts=percentiles(
-            run.wall_ms for run in judged if run.candidate_class != CandidateClass.TIMEOUT
-        ),
+        ordinary=percentiles(run.wall_ms for run in ordinary),
+        wall_values=tuple(run.wall_ms for run in judged),
+        ordinary_values=tuple(run.wall_ms for run in ordinary),
+        reset_values=tuple(run.reset_ms for run in judged),
         client_startup=percentiles(run.client_startup_ms for run in judged),
         startup=percentiles(run.startup_ms for run in judged),
         execution=percentiles(run.exec_ms for run in judged),
@@ -489,8 +516,8 @@ def render_arm(summary: ArmSummary) -> str:
         f"- Server version {header.server_version or NOT_MEASURED} ({header.server_version_source}), "
         f"SDK {header.sdk_version} at {header.sdk_rev}, git {header.git_commit}{' (dirty)' if header.git_dirty else ''}",
         f"- Host {header.hostname}, {header.cpu_count} CPUs, load {load_average(header.load_start)} at the start, "
-        f"{load_average(footer.load_end) if footer else NOT_MEASURED} at the end, client CPU "
-        f"{f'{footer.client_cpu_seconds:.1f} s' if footer else NOT_MEASURED}",
+        f"{load_average(footer.load_end) if footer else NOT_MEASURED} at the end, client CPU in the measured window "
+        f"{f'{footer.client_cpu_seconds:.1f} s' if footer and footer.client_cpu_seconds is not None else NOT_MEASURED}",
         f"- Image resolved via: {header.image_resolved_via or IMAGE_UNCONFIRMED}",
         f"- Measured {summary.measured} of {summary.planned} planned: {summary.judged} with a verdict, "
         f"{summary.infra_failed} infrastructure failures" + (f" {summary.infra_failures}" if summary.infra_failures else ""),
@@ -516,9 +543,9 @@ def render_arm(summary: ArmSummary) -> str:
         lines.append(f"- **{_hand_written_warning(summary)}**")
     if summary.off_shape_exceeded:
         lines.append(f"- **{_off_shape_warning(summary)}**")
-    if footer is None or not footer.completed:
+    if not summary.complete:
         lines.append("- **This arm did not finish. The numbers cover only what it logged.**")
-    lines += [f"- **Warning: {warning}**" for warning in load_warnings(header)]
+    lines += [f"- **Warning: {warning}**" for warning in (*load_warnings(header), *client_cpu_warnings(summary))]
     lines += [
         "",
         "| Time, runs with a verdict, in ms | Count | Not reported | p50 | p90 | p99 | Max |",
@@ -535,12 +562,15 @@ def render_arm(summary: ArmSummary) -> str:
         lines.append(f"| {name} | {values.count} | {values.missing} | {_cells(values)} |")
     lines += [
         "",
+        "Vora leaves out `startup_ms` and `reset_ms` under 1 ms, and `reset_ms` when no reset ran, so a percentile of "
+        "either covers only the slower runs it reported. A row with more left out than reported shows no percentile.",
+        "",
         "| Wall-clock by class, in ms | Planned | With a verdict | Infrastructure failures | p50 | p90 | p99 | Max "
         "| Share of slot time | Verdicts |",
         "|---|---|---|---|---|---|---|---|---|---|",
+        f"| {ORDINARY_ROW} | | {summary.ordinary.count} | | {_cells(summary.ordinary)} | | |",
         f"| All classes | {summary.planned} | {summary.judged} | {summary.infra_failed} | {_cells(summary.wall)} "
         f"| {_share(_total_slot_share(summary))} | {summary.verdicts} |",
-        f"| All but timeout | | {summary.wall_without_timeouts.count} | | {_cells(summary.wall_without_timeouts)} | | |",
     ]
     lines += [
         f"| {row.name} | {row.planned} | {row.judged} | {row.infra_failed} | {_cells(row.wall)} "
@@ -590,8 +620,8 @@ def render_summary(raw: RawFile, leak_suites: Sequence[SuiteResult] | None = Non
     if raw.unreadable_lines:
         lines += [f"**{raw.unreadable_lines} lines of this file could not be read.**", ""]
     lines += _verdicts_section(raw)
-    lines += _comparison(raw.arms)
     lines += _leak_section(read_leak_suites(latest_session=latest_session_by_backend(raw)) if leak_suites is None else leak_suites)
+    lines += _comparison(raw.arms)
     lines += [render_arm(arm) for arm in raw.arms]
     return "\n".join(lines) + "\n"
 
@@ -703,29 +733,82 @@ def _leak_section(suites: Sequence[SuiteResult]) -> list[str]:
 
 
 def _comparison(arms: Sequence[ArmSummary]) -> list[str]:
+    """Pooled figures and ranges cover complete sessions only. Failures count from every session."""
     if not arms:
         return []
+    by_arm = [(mode, [arm for arm in arms if arm.arm is mode]) for mode in PoolMode]
+    by_arm = [(mode, sessions) for mode, sessions in by_arm if sessions]
     lines = [
-        "| Arm | Sessions | Wall p50, ms (range) | Wall p99, ms (range) | Programs/s (range) | Infrastructure failures "
-        "| Off shape | Hand-written not passed |",
-        "|---|---|---|---|---|---|---|---|",
+        "## Arms",
+        "",
+        f"Wall-clock in ms, start to exit, over complete sessions. Ordinary programs are every class but "
+        f"{', '.join(sorted(EXPENSIVE_CLASSES))}.",
+        "",
+        *_wall_table(by_arm, lambda arm: arm.ordinary, lambda arm: arm.ordinary_values),
+        "",
+        "All classes, expensive ones included. Their under 1% sits just inside the slowest 1%, so this p99 is a near-worst run.",
+        "",
+        *_wall_table(by_arm, lambda arm: arm.wall, lambda arm: arm.wall_values),
+        "",
+        "| Arm | Reset p50, ms | Reset p99, ms | Resets reported | No figure from Vora | Reset failures | Programs/s (range) "
+        "| Infrastructure failures | Off shape, against its bound | Hand-written not passed |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
-    notes: list[str] = []
-    for mode in PoolMode:
-        sessions = [arm for arm in arms if arm.arm is mode]
-        if not sessions:
-            continue
+    for mode, sessions in by_arm:
+        complete = [arm for arm in sessions if arm.complete]
+        reset = percentiles(value for arm in complete for value in arm.reset_values)
+        failures = sum(arm.reset_failures for arm in sessions)
         lines.append(
-            f"| {arm_label(mode)} | {len(sessions)} "
-            f"| {_median_range(arm.wall.p50 for arm in sessions)} "
-            f"| {_median_range(arm.wall.p99 for arm in sessions)} "
-            f"| {_median_range(arm.programs_per_second for arm in sessions)} "
+            f"| {arm_label(mode)} | {_percentile_cell(reset, reset.p50)} | {_percentile_cell(reset, reset.p99)} "
+            f"| {reset.count} | {reset.missing} | {f'**{failures}**' if failures else 0} "
+            f"| {_median_range(arm.programs_per_second for arm in complete)} "
             f"| {sum(arm.infra_failed for arm in sessions)} of {sum(arm.measured for arm in sessions)} "
-            f"| {sum(arm.off_shape for arm in sessions)} "
+            f"| {_off_shape_cell(sessions)} "
             f"| {sum(len(arm.hand_written_not_passed) for arm in sessions)} |"
         )
-        if len(sessions) < MIN_SESSIONS:
-            notes.append(f"{mode.value} has {len(sessions)} sessions: fewer than {MIN_SESSIONS} can't show it reproduces.")
+    return [*lines, "", *_comparison_cautions(arms, by_arm), ""]
+
+
+def _wall_table(
+    by_arm: Sequence[tuple[PoolMode, Sequence[ArmSummary]]],
+    per_session: Callable[[ArmSummary], Percentiles],
+    values: Callable[[ArmSummary], Iterable[float | None]],
+) -> list[str]:
+    lines = [
+        "| Arm | Sessions | Runs, pooled | p50 | p90 | p99 | Max | Per session: p50 median (range) | p99 median (range) |",
+        "|---|---|---|---|---|---|---|---|---|",
+    ]
+    for mode, sessions in by_arm:
+        complete = [arm for arm in sessions if arm.complete]
+        pooled = percentiles(value for arm in complete for value in values(arm))
+        lines.append(
+            f"| {arm_label(mode)} | {_session_cell(len(complete), len(sessions) - len(complete))} | {pooled.count} | {_cells(pooled)} "
+            f"| {_median_range(per_session(arm).p50 for arm in complete)} "
+            f"| {_median_range(per_session(arm).p99 for arm in complete)} |"
+        )
+    return lines
+
+
+def _session_cell(complete: int, incomplete: int) -> str:
+    return f"{complete}, **plus {incomplete} incomplete**" if incomplete else str(complete)
+
+
+def _off_shape_cell(sessions: Sequence[ArmSummary]) -> str:
+    above = sum(arm.off_shape_exceeded for arm in sessions)
+    cell = f"{sum(arm.off_shape for arm in sessions)}, bound {sum(arm.off_shape_bound for arm in sessions)}"
+    return f"{cell}, **{above} sessions above theirs**" if above else cell
+
+
+def _comparison_cautions(arms: Sequence[ArmSummary], by_arm: Sequence[tuple[PoolMode, Sequence[ArmSummary]]]) -> list[str]:
+    notes = _p99_note(arms)
+    incomplete = [arm for arm in arms if not arm.complete]
+    if incomplete:
+        listed = ", ".join(f"{arm.arm.value} {arm.header.session} ({arm.measured} of {arm.planned} measured)" for arm in incomplete)
+        notes.append(f"**Incomplete sessions, left out of the pooled figures, ranges and session counts: {listed}.**")
+    for mode, sessions in by_arm:
+        complete = sum(arm.complete for arm in sessions)
+        if complete < MIN_SESSIONS:
+            notes.append(f"{mode.value} has {complete} complete sessions: fewer than {MIN_SESSIONS} can't show it reproduces.")
     if any(arm.header.image_resolved_via is None for arm in arms):
         notes.append(f"Image source: {IMAGE_UNCONFIRMED}.")
     corpora = {
@@ -736,9 +819,42 @@ def _comparison(arms: Sequence[ArmSummary]) -> list[str]:
         notes.append("These arms ran different corpora, so the arms are not comparable.")
     if len({(arm.header.concurrency, arm.header.backend) for arm in arms}) > 1:
         notes.append("These sessions differ in concurrency or backend, so the arms are not comparable.")
+    notes += _session_differences(arms)
+    notes += [warning for arm in arms for warning in client_cpu_warnings(arm)]
     order = sorted(arms, key=lambda arm: arm.header.started_at)
     notes.append(f"Session order: {', '.join(arm.header.arm for arm in order)}.")
-    return [*lines, "", *notes, ""]
+    return notes
+
+
+def _p99_note(arms: Sequence[ArmSummary]) -> list[str]:
+    runs = [arm.ordinary.count for arm in arms if arm.complete and arm.ordinary.count]
+    if not runs:
+        return []
+    smallest = min(runs)
+    return [
+        f"A session's p99 rests on its slowest 1%: about {max(round(smallest / 100), 1)} runs of the {smallest} ordinary runs "
+        "in the smallest session here. Read the pooled p99 with the per-session range."
+    ]
+
+
+_SESSION_FACTS: Sequence[tuple[str, Callable[[BenchHeader], object]]] = (
+    ("host", lambda header: header.hostname),
+    ("commit", lambda header: header.git_commit),
+    ("dirty state", lambda header: header.git_dirty),
+    ("server version", lambda header: header.server_version),
+    ("memory", lambda header: header.memory_bytes),
+    ("warmup", lambda header: header.warmup),
+)
+
+
+def _session_differences(arms: Sequence[ArmSummary]) -> list[str]:
+    """A raw file appends, so two hosts or two commits can sit in one file without anyone choosing that."""
+    notes = []
+    for name, fact in _SESSION_FACTS:
+        values = {str(fact(arm.header)) for arm in arms}
+        if len(values) > 1:
+            notes.append(f"**These sessions differ in {name}: {', '.join(sorted(values))}.**")
+    return notes
 
 
 def _median_range(values: Iterable[float | None]) -> str:
@@ -756,12 +872,27 @@ def _ms(value: float | None) -> str:
     return NOT_MEASURED if value is None else f"{value:.1f}"
 
 
+def _percentile_cell(values: Percentiles, value: float | None) -> str:
+    return UNDER_HALF_REPORTED if values.count and values.missing > values.count else _ms(value)
+
+
 def _cells(values: Percentiles) -> str:
-    return " | ".join(_ms(value) for value in (values.p50, values.p90, values.p99, values.max))
+    return " | ".join(_percentile_cell(values, value) for value in (values.p50, values.p90, values.p99, values.max))
 
 
 def _share(value: float | None) -> str:
     return NOT_MEASURED if value is None else f"{value * 100:.1f}%"
+
+
+def client_cpu_warnings(summary: ArmSummary) -> list[str]:
+    share = summary.client_cpu_share
+    if share is None or share <= CLIENT_CPU_WARN_SHARE:
+        return []
+    return [
+        f"{summary.arm.value} session {summary.header.session}: the client used {share * 100:.0f}% of a CPU over the measured "
+        f"window, above the {CLIENT_CPU_WARN_SHARE * 100:.0f}% this summary allows. The client may be what limits this "
+        "arm's throughput, not Vora"
+    ]
 
 
 def load_warnings(header: BenchHeader) -> list[str]:

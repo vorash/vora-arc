@@ -28,8 +28,9 @@ class CandidateClass(StrEnum):
 
 
 MIX_DENOMINATOR = 10_000
-# Parts of MIX_DENOMINATOR. Slow, memory-hungry and timeout stay under 1% together, so the
-# overall p99 is an ordinary program's and these show in their own rows and the max.
+# Parts of MIX_DENOMINATOR. The expensive classes stay under 1% together, which puts them just
+# inside the slowest 1%: at 2,000 candidates the overall p99 is the 3rd slowest of 1,982 ordinary
+# runs. That is a near-worst run, so the summary leads with these classes left out.
 MIX: Mapping[CandidateClass, int] = {
     CandidateClass.HAND_WRITTEN: 1000,
     CandidateClass.MUTATED: 5010,
@@ -41,6 +42,8 @@ MIX: Mapping[CandidateClass, int] = {
     CandidateClass.MEMORY_HUNGRY: 30,
     CandidateClass.TIMEOUT: 10,
 }
+
+EXPENSIVE_CLASSES = frozenset({CandidateClass.SLOW, CandidateClass.MEMORY_HUNGRY, CandidateClass.TIMEOUT})
 
 # Far enough from the runner's 2 s per input and the sandbox's 256 MiB that the verdict
 # can't depend on the arm. Going over either limit is the hostile suite's job.

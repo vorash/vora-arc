@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
+import math
 import os
 import subprocess
 import sys
@@ -16,6 +17,7 @@ from host_safety import host_safety_failures, programs_for_the_host, violations
 
 from vora_arc.client import _batch_result, _Collector, batch_request
 from vora_arc.corpus import (
+    EXPENSIVE_CLASSES,
     MIX,
     MIX_DENOMINATOR,
     SLOW_SECONDS,
@@ -101,10 +103,17 @@ def test_a_mix_that_does_not_add_up_is_refused() -> None:
         composition(100, {CandidateClass.HAND_WRITTEN: 1})
 
 
-def test_the_expensive_classes_stay_under_one_percent_so_p99_stays_an_ordinary_programs() -> None:
-    expensive = MIX[CandidateClass.SLOW] + MIX[CandidateClass.MEMORY_HUNGRY] + MIX[CandidateClass.TIMEOUT]
+def test_the_expensive_classes_are_rare_and_named_as_the_summary_leaves_them_out() -> None:
+    assert EXPENSIVE_CLASSES == {CandidateClass.SLOW, CandidateClass.MEMORY_HUNGRY, CandidateClass.TIMEOUT}
+    assert sum(MIX[name] for name in EXPENSIVE_CLASSES) / MIX_DENOMINATOR < 0.01
 
-    assert expensive / MIX_DENOMINATOR < 0.01
+
+def test_the_mix_leaves_the_overall_p99_as_a_near_worst_ordinary_run() -> None:
+    # Why a summary can't lead with the overall p99: it is close to the slowest ordinary run, not a typical slow one.
+    counts = composition(2000)
+    expensive = sum(counts[name] for name in EXPENSIVE_CLASSES)
+    above_p99 = 2000 - math.ceil(0.99 * 2000)
+    assert (2000 - expensive, above_p99 - expensive + 1) == (1982, 3), "the 3rd slowest of 1982"
 
 
 def test_candidates_are_interleaved_so_no_stretch_of_the_run_is_one_class() -> None:

@@ -40,10 +40,16 @@ corpus (everything but `syntax_error`, `missing_transform` and `timeout`) calls 
 input. The other 15.1% stops while loading, because generated programs can do that and the arms must
 handle it too. The mix is a choice for this experiment. It doesn't describe any model's output.
 
-**Why so little of the expensive classes.** `slow`, `memory_hungry` and `timeout` together are 0.9%.
-As long as they are slower than ordinary programs, they all sit above the nearest-rank p99, which
-therefore stays an ordinary program's. They show in the max, in their own rows and in the share of
-slot time.
+**Why so little of the expensive classes.** `slow`, `memory_hungry` and `timeout` together are 0.9%, so
+they don't dominate the throughput. That doesn't make the overall p99 typical. They fill most of the
+slowest 1%: with 18 of them in 2,000 candidates, and all 18 slower than any ordinary program, the
+overall p99 is the 3rd slowest of the 1,982 ordinary runs. So the summary leads with an **ordinary
+programs** row that leaves those three classes out. They show in the all-classes row, in their own rows
+and in the share of slot time.
+
+**How little a session's p99 rests on.** A nearest-rank p99 over one session of 2,000 rests on about 20
+runs, so one or two slow runs move it. The summary shows a p99 pooled across the complete sessions of an
+arm next to the range of each session's own p99. Read both.
 
 **Why a timeout doesn't dominate.** A loop in `transform` costs one per-input timeout per input, and
 enough inputs reach the 10 s batch limit, where Vora kills the run. This corpus has no program that
@@ -278,17 +284,31 @@ uv run vora-arc bench-summary results/bench/experiment-1-bwrap.jsonl \
   --leak-pytest bwrap=results/bench/leak-bwrap.xml --leak-vora bwrap=results/bench/vora-leak-bwrap.log
 ```
 
-The summary reads only the files you give it, and it takes several raw files. It shows, in order:
+The summary reads only the files you give it, and it takes several raw files. A raw file appends, so
+it can hold sessions you didn't mean to mix: the summary says when sessions differ in host, commit,
+dirty state, server version, memory or warmup. It shows, in order:
 
 1. Candidates that differ in verdict or outputs, safe arms apart from no-reset, and hand-written
    solutions that didn't pass.
-2. Each arm's median and range across sessions, and the order the sessions ran in.
-3. The leak table, with each report's date and the Vora build its log names.
+2. The leak table, with each report's date and the Vora build its log names.
+3. For each arm, over its complete sessions: ordinary programs first and then all classes, each with
+   p50, p90, p99, max and count pooled across sessions, and the range of each session's p50 and p99.
+   Then the reset's p50 and p99, reset failures, programs per second, and the failure counts. A
+   killed session, or one that lost lines, is marked `incomplete`, left out of the pooled figures, the
+   ranges and the session count, and listed by name. Its failures still count.
 4. Each session: programs per second, p50, p90, p99, max and count for each time, then the same for
-   wall-clock overall, without timeouts and per class, with each class's share of slot time.
+   wall-clock for ordinary programs, for all classes and per class, with each class's share of slot time.
 
 Percentiles are nearest-rank, over the runs with a verdict. Programs per second is the runs with a
 verdict divided by the measured phase's wall time, which excludes warmup, at the recorded concurrency.
+
+Vora leaves out `startup_ms` and `reset_ms` under 1 ms, so their percentiles cover only the slower runs.
+The count that left it out sits next to them, and a row with more left out than reported shows
+`under half reported` instead of a percentile. The client's own startup time has no such gap.
+
+A reset failure retires its member, and the next run can still report warm on a new one, so it doesn't
+show as off shape. The top table counts reset failures and makes a nonzero count bold. They don't change
+`bench`'s exit code unless the cold runs they cause go above the bound.
 
 ## What limits each arm's number
 

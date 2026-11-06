@@ -120,9 +120,9 @@ async def run_bench(
         with raw_path.open("a") as file:
             log = RawLog(file)
             log.write("header", header)
-            cpu_started = _cpu_seconds()
             ready_ms: float | None = None
             measured_seconds: float | None = None
+            client_cpu_seconds: float | None = None
             completed = False
             try:
                 async with open_pool(
@@ -139,8 +139,10 @@ async def run_bench(
                     ready_ms = await _wait_until_ready(pool, settings)
                     await _run_phase(job, "warmup", warmup)
                     started = time.perf_counter()
+                    cpu_started = _cpu_seconds()
                     await _run_phase(job, "measured", corpus.candidates)
                     measured_seconds = time.perf_counter() - started
+                    client_cpu_seconds = _cpu_seconds() - cpu_started
                     completed = True
             finally:
                 log.write(
@@ -151,7 +153,7 @@ async def run_bench(
                         completed,
                         ready_ms,
                         measured_seconds,
-                        _cpu_seconds() - cpu_started,
+                        client_cpu_seconds,
                         os.getloadavg(),
                     ),
                 )

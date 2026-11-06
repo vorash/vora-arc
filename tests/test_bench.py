@@ -6,7 +6,7 @@ import base64
 import json
 import os
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -596,27 +596,230 @@ def test_programs_per_second_comes_from_the_measured_window_and_leaves_warmup_ou
     assert f"{CANDIDATES / 2.0:.1f}, {CANDIDATES} verdicts over 2.0 s of measured wall time at concurrency 1" in text
 
 
-def test_latency_is_reported_overall_and_per_class_and_a_timeout_can_be_read_apart(bencher: Bench) -> None:
-    assert bencher.run("warm", "--candidates", "40") == 0
+def rewrite_raw(bencher: Bench, change: Callable[[dict[str, Any]], None]) -> None:
     rows = [json.loads(line) for line in bencher.raw.read_text().splitlines()]
-    measured = [row for row in rows if row["type"] == "run" and row["phase"] == "measured"]
-    slow = measured[0]
-    slow["candidate_class"] = "timeout"
-    slow["wall_ms"] = 10_000.0
+    for row in rows:
+        change(row)
     bencher.raw.write_text("".join(json.dumps(row) + "\n" for row in rows))
 
+
+def table_row(text: str, start: str) -> str:
+    return next(line for line in text.splitlines() if line.startswith(start))
+
+
+def test_ordinary_programs_lead_and_leave_the_expensive_classes_out(bencher: Bench) -> None:
+    assert bencher.run("warm", "--candidates", "40") == 0
+
+    expensive = iter(["slow", "memory_hungry", "timeout"])
+
+    def make_expensive(row: dict[str, Any]) -> None:
+        if row["type"] == "run" and row["phase"] == "measured" and (name := next(expensive, None)):
+            row["candidate_class"] = name
+            row["wall_ms"] = 10_000.0
+
+    rewrite_raw(bencher, make_expensive)
     summary = load_raw(bencher.raw).arms[0]
 
-    assert summary.wall.max == 10_000.0, "the overall row keeps it"
-    assert summary.wall_without_timeouts.max is not None and summary.wall_without_timeouts.max < 10_000.0
-    assert summary.wall_without_timeouts.count == 39
+    assert summary.wall.max == 10_000.0, "the all-classes row keeps them"
+    assert summary.ordinary.max is not None and summary.ordinary.max < 10_000.0
+    assert (summary.wall.count, summary.ordinary.count) == (40, 37)
     timeouts = next(row for row in summary.classes if row.name == "timeout")
     assert (timeouts.judged, timeouts.wall.p50, timeouts.wall.p99, timeouts.wall.max) == (1, 10_000.0, 10_000.0, 10_000.0)
     text = render_summary(load_raw(bencher.raw))
     for name in CandidateClass:
         assert f"| {name.value} | " in text
-    assert "| All but timeout | " in text
+    first, _ = text.split("All classes, expensive ones included.", 1)
+    assert "Ordinary programs are every class but memory_hungry, slow, timeout." in first
+    assert "10000.0" not in table_row(first, "| warm | 1 | 37 |"), "the first table has no expensive run in it"
+    assert "| warm | 1 | 40 |" in text and "10000.0" in table_row(text, "| warm | 1 | 40 |")
     assert sum(row.slot_share or 0 for row in summary.classes) > 0
+
+
+def test_the_top_table_pools_across_sessions_and_shows_each_sessions_range(bencher: Bench) -> None:
+    for _ in range(2):
+        assert bencher.run("warm", "--candidates", "100") == 0
+    sessions = [header["session"] for header in bencher.rows("header")]
+
+    def spread(row: dict[str, Any]) -> None:
+        if row["type"] == "run" and row["phase"] == "measured":
+            row["wall_ms"] = float(row["index"] + 1) * (1 if row["session"] == sessions[0] else 10)
+            row["candidate_class"] = "mutated"
+
+    rewrite_raw(bencher, spread)
+    text = render_summary(load_raw(bencher.raw))
+
+    assert "| warm | 2 | 200 | 91.0 | 800.0 | 980.0 | 1000.0 | 275.0 (50.0 to 500.0) | 544.5 (99.0 to 990.0) |" in text
+    assert "A session's p99 rests on its slowest 1%: about 1 runs of the 100 ordinary runs" in text
+
+
+def test_a_session_of_2000_says_its_p99_rests_on_20_runs(bencher: Bench) -> None:
+    assert bencher.run("warm", "--candidates", "2000", "--concurrency", "4") == 0
+
+    assert "about 20 runs of the 1982 ordinary runs" in render_summary(load_raw(bencher.raw))
+
+
+def test_the_top_table_shows_what_a_reset_costs(bencher: Bench) -> None:
+    assert bencher.run("warm") == 0
+
+    text = render_summary(load_raw(bencher.raw))
+
+    assert "| Arm | Reset p50, ms | Reset p99, ms |" in text
+    assert table_row(text, "| warm | 3.0 | 3.0 | 6 | 0 | 0 |")
+
+
+def test_a_reset_failure_shows_at_the_top_and_doesnt_fail_the_bench_by_itself(bencher: Bench) -> None:
+    failed = Frames(
+        (
+            {"run": {"warm": True}},
+            RIGHT,
+            {"exit": {"reason": "EXITED"}},
+            {"runDone": {"outcome": "POOL_RESET_FAILED", "resetMs": "2", "retireCause": "reset_failed"}},
+        )
+    )
+    bencher.fake.runs.extend([answers(RIGHT), answers(RIGHT), failed])
+
+    assert bencher.run("warm") == 0
+
+    summary = load_raw(bencher.raw).arms[0]
+    assert (summary.reset_failures, summary.retire_causes.get("reset_failed")) == (1, 1)
+    assert "| **1** |" in render_summary(load_raw(bencher.raw))
+
+
+def test_an_arm_that_fails_every_reset_is_visible_with_no_cold_run_to_give_it_away(bencher: Bench) -> None:
+    failed = {"outcome": "POOL_RESET_FAILED", "resetMs": "2", "retireCause": "reset_failed"}
+    bencher.fake.script_for = lambda pool, program: Frames(({"run": {"warm": True, "sandboxRun": 1}}, RIGHT, {"exit": {"reason": "EXITED"}}, {"runDone": failed}))
+
+    assert bencher.run("warm", "--warmup", "0") == 0, "resets alone don't change the exit code"
+
+    assert f"| **{CANDIDATES}** |" in render_summary(load_raw(bencher.raw))
+
+
+def test_a_killed_session_is_marked_listed_and_left_out_of_the_range(bencher: Bench) -> None:
+    for _ in range(3):
+        assert bencher.run("warm", "--candidates", "20") == 0
+    killed = bencher.rows("header")[0]["session"]
+
+    def kill(row: dict[str, Any]) -> None:
+        if row["type"] == "run" and row["phase"] == "measured":
+            row["wall_ms"] = 0.001 if row["session"] == killed else 100.0
+            row["candidate_class"] = "mutated"
+
+    rewrite_raw(bencher, kill)
+    kept = [
+        line
+        for line in bencher.raw.read_text().splitlines()
+        if not (json.loads(line)["session"] == killed and (json.loads(line)["type"] == "footer" or json.loads(line).get("index", 0) > 3))
+    ]
+    bencher.raw.write_text("\n".join(kept) + "\n")
+
+    text = render_summary(load_raw(bencher.raw))
+
+    assert "| warm | 2, **plus 1 incomplete** | 40 | 100.0 | 100.0 | 100.0 | 100.0 | 100.0 (100.0 to 100.0) | 100.0 (100.0 to 100.0) |" in text
+    assert f"**Incomplete sessions, left out of the pooled figures, ranges and session counts: warm {killed} (4 of 20 measured).**" in text
+    assert "warm has 2 complete sessions: fewer than 5" in text
+
+
+def test_a_completed_footer_with_lost_lines_is_incomplete(bencher: Bench) -> None:
+    assert bencher.run("warm") == 0
+    lines = bencher.raw.read_text().splitlines()
+    bencher.raw.write_text("\n".join(line for line in lines if json.loads(line).get("index") != 3 or json.loads(line).get("phase") != "measured") + "\n")
+
+    arm = load_raw(bencher.raw).arms[0]
+
+    assert (arm.measured, arm.complete) == (CANDIDATES - 1, False)
+
+
+def test_a_failure_in_an_incomplete_session_still_counts(bencher: Bench) -> None:
+    bencher.fake.runs.extend([answers(RIGHT), answers(RIGHT), Refuse(429, "pool full")])
+    assert bencher.run("warm") == 1
+    kept = [line for line in bencher.raw.read_text().splitlines() if json.loads(line)["type"] != "footer"]
+    bencher.raw.write_text("\n".join(kept) + "\n")
+
+    assert "| 1 of 6 |" in render_summary(load_raw(bencher.raw))
+
+
+@pytest.mark.parametrize(
+    ("key", "values", "name"),
+    [
+        ("hostname", ("box-a", "box-b"), "host"),
+        ("git_commit", ("aaa", "bbb"), "commit"),
+        ("git_dirty", (False, True), "dirty state"),
+        ("server_version", ("v1", "v2"), "server version"),
+        ("memory_bytes", (1, 2), "memory"),
+        ("warmup", (1, 2), "warmup"),
+    ],
+)
+def test_sessions_that_differ_in_what_decides_a_number_say_so(bencher: Bench, key: str, values: tuple[Any, Any], name: str) -> None:
+    assert bencher.run("warm") == 0
+    assert bencher.run("warm") == 0
+    choices = iter(values)
+
+    def differ(row: dict[str, Any]) -> None:
+        if row["type"] == "header":
+            row[key] = next(choices)
+
+    rewrite_raw(bencher, differ)
+    text = render_summary(load_raw(bencher.raw))
+
+    assert f"**These sessions differ in {name}: {values[0]}, {values[1]}.**" in text
+
+
+def test_sessions_that_match_note_no_difference(bencher: Bench) -> None:
+    assert bencher.run("warm") == 0
+    assert bencher.run("warm") == 0
+
+    assert "These sessions differ" not in render_summary(load_raw(bencher.raw))
+
+
+def test_a_partly_reported_startup_shows_no_percentile_once_most_runs_left_it_out(bencher: Bench) -> None:
+    assert bencher.run("warm", "--candidates", "20") == 0
+    kept = iter(range(10**6))
+
+    def omit(row: dict[str, Any]) -> None:
+        if row["type"] == "run" and row["phase"] == "measured" and next(kept) > 0:
+            row["startup_ms"] = None
+
+    rewrite_raw(bencher, omit)
+    text = render_summary(load_raw(bencher.raw))
+
+    assert "| Startup (Vora) | 1 | 19 | under half reported | under half reported | under half reported | under half reported |" in text
+    assert "covers only the slower runs it reported" in text
+
+
+def test_a_mostly_reported_startup_keeps_its_percentiles(bencher: Bench) -> None:
+    assert bencher.run("warm", "--candidates", "20") == 0
+    kept = iter(range(10**6))
+
+    def omit(row: dict[str, Any]) -> None:
+        if row["type"] == "run" and row["phase"] == "measured" and next(kept) < 5:
+            row["startup_ms"] = None
+
+    rewrite_raw(bencher, omit)
+
+    assert "| Startup (Vora) | 15 | 5 | 1.0 | 1.0 | 1.0 | 1.0 |" in render_summary(load_raw(bencher.raw))
+
+
+def test_the_client_cpu_window_is_the_measured_phase_alone(bencher: Bench, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A clock that ticks once per request: warmup or the delete in the window would show in the count.
+    monkeypatch.setattr(bench, "_cpu_seconds", lambda: float(len(bencher.fake.seen)))
+
+    assert bencher.run("warm", "--concurrency", "1") == 0
+
+    assert bencher.rows("footer")[0]["client_cpu_seconds"] == CANDIDATES
+
+
+@pytest.mark.parametrize(("cpu", "warned"), [(4.9, False), (5.1, True)])
+def test_a_client_near_its_cpu_limit_is_called_out(bencher: Bench, cpu: float, warned: bool) -> None:
+    assert bencher.run("warm") == 0
+
+    def busy(row: dict[str, Any]) -> None:
+        if row["type"] == "footer":
+            row["client_cpu_seconds"], row["measured_seconds"] = cpu, 10.0
+
+    rewrite_raw(bencher, busy)
+    text = render_summary(load_raw(bencher.raw))
+
+    assert ("may be what limits this arm's throughput" in text) is warned
 
 
 def test_the_corpus_composition_is_in_every_summary(bencher: Bench, capsys: pytest.CaptureFixture[str]) -> None:
@@ -913,7 +1116,7 @@ def test_sessions_of_an_arm_show_their_median_and_range_and_too_few_are_called_o
     text = render_summary(load_raw(bencher.raw))
 
     assert "| warm | 2 | " in text
-    assert "warm has 2 sessions: fewer than 5 can't show it reproduces." in text
+    assert "warm has 2 complete sessions: fewer than 5 can't show it reproduces." in text
 
 
 def test_arms_that_ran_different_corpora_are_not_compared_silently(bencher: Bench) -> None:
