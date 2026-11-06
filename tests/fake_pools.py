@@ -10,8 +10,8 @@ import base64
 import json
 import threading
 import time
-from collections import deque
-from collections.abc import Callable, Iterator
+from collections import Counter, deque
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -58,6 +58,135 @@ class Frames:
 Script = Refuse | Frames
 
 
+@dataclass
+class Member:
+    id: str
+    runs: int = 0
+
+
+@dataclass(frozen=True)
+class Placement:
+    member: Member
+    warm: bool
+
+
+@dataclass
+class _Waiter:
+    granted: threading.Event = field(default_factory=threading.Event)
+    placement: Placement | None = None
+
+
+@dataclass
+class LivePool:
+    """Vora's borrow rule and retirement (`internal/pool/pool.go`), minus the sandboxes: what warm and cold mean.
+
+    A retired member keeps its slot until its destroy returns. A borrower with no idle member then
+    waits, unless nothing is in flight and a slot is free, when it starts cold. When a destroy
+    returns, the freed slot goes to the first waiter as a cold start if nothing else is in flight,
+    and otherwise starts a replacement in the background.
+    """
+
+    size: int
+    max_size: int
+    max_runs: int | None
+    no_reset: bool
+    destroy_s: float = 0.0
+    start_s: float = 0.0
+    idle: deque[Member] = field(default_factory=deque)
+    waiters: deque[_Waiter] = field(default_factory=deque)
+    busy: int = 0
+    starting: int = 0
+    retiring: int = 0
+    max_busy: int = 0
+    started: int = 0
+    retired: Counter[str] = field(default_factory=Counter)
+    _lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def __post_init__(self) -> None:
+        for _ in range(self.size):
+            self.idle.append(self._new_member())
+
+    @classmethod
+    def from_spec(cls, spec: dict[str, Any], destroy_s: float = 0.0, start_s: float = 0.0) -> LivePool:
+        size = int(spec.get("size", 8))
+        return cls(
+            size=size,
+            max_size=int(spec.get("maxSize", max(size, 1))),
+            max_runs=int(spec["maxRuns"]) if "maxRuns" in spec else None,
+            no_reset=spec.get("reuse") == "POOL_REUSE_UNSAFE_NO_RESET",
+            destroy_s=destroy_s,
+            start_s=start_s,
+        )
+
+    def borrow(self) -> Placement:
+        with self._lock:
+            if self.idle:
+                return self._lend(self.idle.popleft(), warm=True)
+            if not self._in_flight() and self._slot_free():
+                return self._lend(self._new_member(), warm=False)
+            waiter = _Waiter()
+            self.waiters.append(waiter)
+        assert waiter.granted.wait(30), "no member came back for a waiting borrower"
+        assert waiter.placement is not None
+        return waiter.placement
+
+    def check_in(self, member: Member) -> Frame:
+        with self._lock:
+            self.busy -= 1
+            cause = "shrink" if self.size == 0 else "max_runs" if self.max_runs and member.runs >= self.max_runs else None
+            if cause is not None:
+                self.retired[cause] += 1
+                self.retiring += 1
+                threading.Thread(target=self._destroy, daemon=True).start()
+                return {"outcome": "POOL_RESET_RETIRED", "retireCause": cause}
+            self._to_idle(member)
+        return {"outcome": "POOL_RESET_SKIPPED"} if self.no_reset else {"outcome": "POOL_RESET_OK", "resetMs": "3"}
+
+    def _new_member(self) -> Member:
+        self.started += 1
+        return Member(f"sbx_{self.started}")
+
+    def _lend(self, member: Member, warm: bool) -> Placement:
+        member.runs += 1
+        self.busy += 1
+        self.max_busy = max(self.max_busy, self.busy)
+        return Placement(member, warm)
+
+    def _in_flight(self) -> bool:
+        return self.starting > 0 or (self.size > 0 and self.busy > 0)
+
+    def _slot_free(self) -> bool:
+        return len(self.idle) + self.busy + self.starting + self.retiring < self.max_size
+
+    def _grant(self, member: Member, warm: bool) -> None:
+        waiter = self.waiters.popleft()
+        waiter.placement = self._lend(member, warm)
+        waiter.granted.set()
+
+    def _to_idle(self, member: Member) -> None:
+        if self.waiters:
+            self._grant(member, warm=True)
+        else:
+            self.idle.append(member)
+
+    def _destroy(self) -> None:
+        time.sleep(self.destroy_s)
+        with self._lock:
+            self.retiring -= 1
+            if self.waiters and not self._in_flight() and self._slot_free():
+                self._grant(self._new_member(), warm=False)
+                return
+            while len(self.idle) + self.busy + self.starting < self.size and self._slot_free():
+                self.starting += 1
+                threading.Thread(target=self._start, daemon=True).start()
+
+    def _start(self) -> None:
+        time.sleep(self.start_s)
+        with self._lock:
+            self.starting -= 1
+            self._to_idle(self._new_member())
+
+
 @dataclass(frozen=True)
 class Seen:
     method: str
@@ -88,7 +217,13 @@ class FakePools:
     in_flight: int = 0
     max_in_flight: int = 0
     client_left: threading.Event = field(default_factory=threading.Event)
-    _member_runs: int = 0
+    destroy_s: float = 0.0
+    """How long a retired member holds its slot."""
+    start_s: float = 0.0
+    """How long a replacement member takes to start."""
+    live: dict[str, LivePool] = field(default_factory=dict)
+    """Each pool's members, from its first run."""
+    _executions: int = 0
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     @property
@@ -110,26 +245,36 @@ class FakePools:
             self._server.server_close()
             thread.join()
 
-    def default_frames(self, spec: dict[str, Any], stdin: dict[str, Any]) -> list[Frame]:
+    def live_pool(self, name: str) -> LivePool:
+        with self._lock:
+            return self.live.setdefault(name, LivePool.from_spec(self.specs.get(name, {}), self.destroy_s, self.start_s))
+
+    def run_frames(self, spec: dict[str, Any], stdin: dict[str, Any], placement: Placement) -> list[Frame]:
+        """Everything before `runDone`, which comes once the member is checked in."""
         results = [
             {"index": item["index"], "status": "OK", "output": self.transform(item["grid"]), "error": None, "wall_ms": 1}
             for item in stdin["inputs"]
         ]
         output = stdout_frame(*results, {"done": True, "stderr_tail": ""})
-        exit_ = {"reason": "EXITED", "executionId": f"exe_{self._member_runs}", "usage": self.usage}
-        ids = {"poolId": "pool_test", "sandboxId": "sbx_1", "executionId": f"exe_{self._member_runs}"}
-        if spec.get("size", 8) == 0:
-            run = ids | {"startupMs": "185", "sandboxRun": 1, "reuse": "POOL_REUSE_RESET"}
-            done = {"outcome": "POOL_RESET_RETIRED", "retireCause": "shrink"}
-        elif spec.get("reuse") == "POOL_REUSE_UNSAFE_NO_RESET":
-            run = ids | {"warm": True, "sandboxRun": self._member_runs, "reuse": "POOL_REUSE_UNSAFE_NO_RESET"}
-            done = {"outcome": "POOL_RESET_SKIPPED"}
+        with self._lock:
+            self._executions += 1
+            execution = f"exe_{self._executions}"
+        exit_ = {"reason": "EXITED", "executionId": execution, "usage": self.usage}
+        run: Frame = {"poolId": "pool_test", "sandboxId": placement.member.id, "executionId": execution}
+        run["sandboxRun"] = placement.member.runs
+        if spec.get("reuse") == "POOL_REUSE_UNSAFE_NO_RESET":
+            run["reuse"] = "POOL_REUSE_UNSAFE_NO_RESET"
         else:
-            run = ids | {"warm": True, "startupMs": "1", "sandboxRun": self._member_runs, "reuse": "POOL_REUSE_RESET"}
-            if self._member_runs > 1:
+            run["reuse"] = "POOL_REUSE_RESET"
+        if not placement.warm:
+            run["startupMs"] = "185"
+        elif spec.get("reuse") == "POOL_REUSE_UNSAFE_NO_RESET":
+            run["warm"] = True
+        else:
+            run |= {"warm": True, "startupMs": "1"}
+            if placement.member.runs > 1:
                 run["resetMs"] = "7"
-            done = {"outcome": "POOL_RESET_OK", "resetMs": "3"}
-        return [{"run": run}, output, {"exit": exit_}, {"runDone": done}]
+        return [{"run": run}, output, {"exit": exit_}]
 
     def _info(self, name: str) -> dict[str, Any]:
         spec = self.specs.get(name, {"name": name})
@@ -194,6 +339,11 @@ class FakePools:
                 self._seen()
                 self._reply(204, None)
 
+            def _frames(self, frames: Iterable[Frame]) -> None:
+                for frame in frames:
+                    self.wfile.write(json.dumps(frame).encode() + b"\n")
+                    self.wfile.flush()
+
             def do_POST(self) -> None:
                 parts, body = self._seen()
                 assert body is not None
@@ -204,7 +354,6 @@ class FakePools:
                         script = fake.script_for(parts[2], stdin["program"])
                     fake.in_flight += 1
                     fake.max_in_flight = max(fake.max_in_flight, fake.in_flight)
-                    fake._member_runs += 1
                 try:
                     if isinstance(script, Refuse):
                         if script.state is not None:
@@ -213,13 +362,15 @@ class FakePools:
                         return
                     if isinstance(script, Frames):
                         time.sleep(script.delay_s)
-                    frames = script.frames if script else fake.default_frames(fake.specs.get(parts[2], {}), stdin)
+                    pool = fake.live_pool(parts[2]) if script is None else None
+                    placement = pool.borrow() if pool else None
+                    frames = script.frames if script else fake.run_frames(fake.specs.get(parts[2], {}), stdin, placement)  # type: ignore[arg-type]
                     self.send_response(200)
                     self.send_header("Content-Type", "application/x-ndjson")
                     self.end_headers()
-                    for frame in frames:
-                        self.wfile.write(json.dumps(frame).encode() + b"\n")
-                        self.wfile.flush()
+                    self._frames(frames)
+                    if pool and placement:
+                        self._frames([{"runDone": pool.check_in(placement.member)}])
                     if isinstance(script, Frames) and script.hold:
                         self.connection.recv(1)
                         fake.client_left.set()

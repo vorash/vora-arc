@@ -157,7 +157,7 @@ async def run_bench(
                 )
     summary = next(arm for arm in load_raw(raw_path).arms if arm.header.session == session)
     print(render_arm(summary))
-    return 1 if summary.infra_failed or summary.off_shape or summary.wrong_reuse or summary.broken else 0
+    return 1 if summary.failed else 0
 
 
 @contextlib.asynccontextmanager

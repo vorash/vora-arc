@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from collections.abc import AsyncIterator, Iterator
+import threading
+import time
+from collections.abc import AsyncIterator, Callable, Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
-from fake_pools import ADMIN_KEY, TENANT_KEY, FakePools, Frames, Refuse, stdout_frame
+from fake_pools import ADMIN_KEY, TENANT_KEY, FakePools, Frames, LivePool, Placement, Refuse, stdout_frame
 from vora import GatewayTimeoutError, Pool, PoolNotLoadedError, PoolNotOnRunnerError, RateLimitedError, Vora
 
 from vora_arc import client, model, schedule
@@ -427,11 +429,63 @@ def test_the_fake_only_says_what_the_real_api_says_about_a_run() -> None:
                     keys.setdefault(frame, set()).update(body)
     fake = FakePools()
     stdin: dict[str, Any] = {"inputs": []}
-    for spec in ({"size": 0}, {"size": 1}, {"size": 1, "reuse": "POOL_REUSE_UNSAFE_NO_RESET"}):
-        fake._member_runs = 2
-        for frame in fake.default_frames(spec, stdin):
-            for name, body in frame.items():
-                if isinstance(body, dict):
-                    assert set(body) <= keys[name], f"{name} has keys the real API never sends"
+    for spec in ({"size": 0}, {"size": 1}, {"size": 1, "reuse": "POOL_REUSE_UNSAFE_NO_RESET"}, {"size": 1, "maxRuns": 2}):
+        pool = LivePool.from_spec(spec)
+        for _ in range(2):
+            placement = pool.borrow()
+            frames = [*fake.run_frames(spec, stdin, placement), {"runDone": pool.check_in(placement.member)}]
+            for frame in frames:
+                for name, body in frame.items():
+                    if isinstance(body, dict):
+                        assert set(body) <= keys[name], f"{name} has keys the real API never sends"
 
 
+def _settled(check: Callable[[], bool]) -> bool:
+    deadline = time.monotonic() + 5
+    while not check() and time.monotonic() < deadline:
+        time.sleep(0.001)
+    return check()
+
+
+def test_the_fake_retires_a_member_at_max_runs_and_gives_each_member_its_own_id() -> None:
+    pool = LivePool.from_spec({"size": 1, "maxSize": 1, "maxRuns": 2}, destroy_s=0.02)
+
+    first = pool.borrow()
+    assert (first.warm, first.member.id, first.member.runs) == (True, "sbx_1", 1)
+    assert pool.check_in(first.member)["outcome"] == "POOL_RESET_OK"
+    second = pool.borrow()
+    assert (second.warm, second.member.id, second.member.runs) == (True, "sbx_1", 2)
+    assert pool.check_in(second.member) == {"outcome": "POOL_RESET_RETIRED", "retireCause": "max_runs"}
+
+    third = pool.borrow()
+
+    assert (third.warm, third.member.id, third.member.runs) == (False, "sbx_2", 1), "a waiter with nothing in flight starts cold"
+    assert pool.retired == {"max_runs": 1}
+
+
+def test_the_fake_replaces_a_retired_member_in_the_background_when_no_one_waits() -> None:
+    pool = LivePool.from_spec({"size": 1, "maxSize": 1, "maxRuns": 1})
+    first = pool.borrow()
+    pool.check_in(first.member)
+
+    assert _settled(lambda: bool(pool.idle))
+
+    replacement = pool.borrow()
+    assert (replacement.warm, replacement.member.id, replacement.member.runs) == (True, "sbx_2", 1)
+
+
+def test_the_fake_queues_a_borrower_while_another_run_is_in_flight() -> None:
+    pool = LivePool.from_spec({"size": 1, "maxSize": 2})
+    first = pool.borrow()
+    second: list[Placement] = []
+    waiter = threading.Thread(target=lambda: second.append(pool.borrow()))
+    waiter.start()
+
+    assert _settled(lambda: bool(pool.waiters)), "a slot is free, but a run in flight will bring a member back"
+    assert not second
+
+    pool.check_in(first.member)
+    waiter.join(5)
+
+    assert (second[0].warm, second[0].member.id) == (True, "sbx_1")
+    assert pool.max_busy == 1

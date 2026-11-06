@@ -21,6 +21,7 @@ from .report import DENIED_SYSCALLS_NOTE, NOT_MEASURED, blocked_net_note
 UNSAFE_LABEL = "UNSAFE: no reset between runs, an experimental control only"
 BUSY_LOAD_PER_CPU = 0.25
 MIN_SESSIONS = 5
+VORA_DEFAULT_MAX_AGE_S = 1800
 IMAGE_UNCONFIRMED = "unconfirmed, and the cold arm may carry a registry attempt on every start (vorash/vora#148)"
 
 _REQUIRED_WARM = {PoolMode.COLD: False, PoolMode.WARM: True, PoolMode.WARM_NO_RESET: True}
@@ -193,10 +194,19 @@ class ArmSummary:
     warmup_infra_failed: int
     warm: int
     cold: int
+    started: int
+    """Measured runs that got as far as a sandbox."""
     off_shape: int
     """Runs that started warm on the cold arm, or not warm on a warm arm."""
+    off_shape_bound: int
     wrong_reuse: int
     reset_outcomes: dict[str, int]
+    retire_causes: dict[str, int]
+    """What each run's check-in retired its member for. A member that retired while idle shows on no run."""
+    sandboxes: int
+    first_runs: int
+    """Runs that were their sandbox's first. A healthy warm arm has one per member."""
+    longest_sandbox_run: int | None
     wall: Percentiles
     wall_without_timeouts: Percentiles
     client_startup: Percentiles
@@ -214,6 +224,15 @@ class ArmSummary:
     def broken(self) -> bool:
         """On the no-reset arm a leak can legitimately fail a good program, which is a finding."""
         return bool(self.hand_written_not_passed) and self.arm is not PoolMode.WARM_NO_RESET
+
+    @property
+    def off_shape_exceeded(self) -> bool:
+        return self.off_shape > self.off_shape_bound
+
+    @property
+    def failed(self) -> bool:
+        """What makes `bench` exit non-zero."""
+        return bool(self.infra_failed or self.off_shape_exceeded or self.wrong_reuse or self.broken)
 
 
 @dataclass(frozen=True)
@@ -274,6 +293,23 @@ def load_raw(*paths: Path) -> RawFile:
     return RawFile(tuple(summarize(row) for row in sessions), compare_verdicts(sessions), unreadable)
 
 
+def off_shape_bound(header: BenchHeader, footer: BenchFooter | None) -> int:
+    """How many runs a healthy arm can start the wrong way. Above this, the arm really is off its shape.
+
+    A cold arm has no warm members, so one warm run is wrong. A warm arm starts a run cold when a
+    member retires: Vora's `Pool.remove` gives the freed slot to one waiter, as a cold start, if
+    nothing else is in flight. So each retirement costs at most one cold run. A member retires
+    only after `max_runs` runs, warmup counted, so 2,000 candidates after 24 warmup runs at
+    `max_runs` 100 retire at most 2,024 // 100 = 20 members. `max_age` retires every member as
+    well, which adds `concurrency` per elapsed `max_age` to a session long enough to reach it.
+    """
+    max_runs = int(header.pool_shape.get("max_runs", 0))
+    if not max_runs:
+        return 0
+    measured_seconds = (footer.measured_seconds or 0.0) if footer else 0.0
+    return (header.candidates + header.warmup) // max_runs + header.concurrency * int(measured_seconds // VORA_DEFAULT_MAX_AGE_S)
+
+
 def summarize(rows: _ArmRows) -> ArmSummary:
     arm = PoolMode(rows.header.arm)
     measured = [run for run in rows.runs if run.phase == "measured"]
@@ -306,9 +342,15 @@ def summarize(rows: _ArmRows) -> ArmSummary:
         warmup_infra_failed=sum(run.infra_failure is not None for run in warmup),
         warm=sum(run.warm is True for run in framed),
         cold=sum(run.warm is False for run in framed),
+        started=len(framed),
         off_shape=sum(run.warm is not _REQUIRED_WARM[arm] for run in framed),
+        off_shape_bound=off_shape_bound(rows.header, rows.footer),
         wrong_reuse=sum((run.reuse or "POOL_REUSE_RESET") != _REQUIRED_REUSE[arm] for run in framed),
         reset_outcomes=dict(Counter(run.reset_outcome or "not reported" for run in framed)),
+        retire_causes=dict(Counter(run.retire_cause for run in framed if run.retire_cause)),
+        sandboxes=len({run.sandbox_id for run in framed if run.sandbox_id}),
+        first_runs=sum(run.sandbox_run == 1 for run in framed),
+        longest_sandbox_run=max((run.sandbox_run for run in framed if run.sandbox_run is not None), default=None),
         wall=percentiles(run.wall_ms for run in judged),
         wall_without_timeouts=percentiles(
             run.wall_ms for run in judged if run.candidate_class != CandidateClass.TIMEOUT
@@ -413,9 +455,12 @@ def render_arm(summary: ArmSummary) -> str:
         f"{summary.infra_failed} infrastructure failures" + (f" {summary.infra_failures}" if summary.infra_failures else ""),
         f"- Program verdicts: {summary.verdicts}",
         f"- Warmup, left out of everything below: {summary.warmup} runs, {summary.warmup_infra_failed} infrastructure failures",
-        f"- Started warm {summary.warm}, cold {summary.cold}; not what this arm requires: {summary.off_shape}; "
+        f"- Started warm {summary.warm}, cold {summary.cold}; not what this arm requires: {summary.off_shape} of "
+        f"{summary.started}{_rate(summary.off_shape, summary.started)}, against a bound of {summary.off_shape_bound}; "
         f"wrong reuse mode: {summary.wrong_reuse}",
         f"- Reset outcomes: {summary.reset_outcomes}",
+        f"- Retired at check-in: {summary.retire_causes}. {summary.sandboxes} sandboxes, {summary.first_runs} first runs, "
+        f"longest sandbox {summary.longest_sandbox_run or NOT_MEASURED} runs",
         "- Programs per second: "
         + (
             NOT_MEASURED
@@ -428,6 +473,8 @@ def render_arm(summary: ArmSummary) -> str:
     ]
     if summary.hand_written_not_passed:
         lines.append(f"- **{_hand_written_warning(summary)}**")
+    if summary.off_shape_exceeded:
+        lines.append(f"- **{_off_shape_warning(summary)}**")
     if footer is None or not footer.completed:
         lines.append("- **This arm did not finish. The numbers cover only what it logged.**")
     lines += [f"- **Warning: {warning}**" for warning in load_warnings(header)]
@@ -474,6 +521,17 @@ def corpus_line(header: BenchHeader) -> str:
         for name, count in header.corpus_counts.items()
     )
     return f"seed {header.corpus_seed}, sha256 {header.corpus_sha256[:12]}, {parts}"
+
+
+def _rate(count: int, total: int) -> str:
+    return f" ({count * 100 / total:.1f}%)" if total else ""
+
+
+def _off_shape_warning(summary: ArmSummary) -> str:
+    return (
+        f"{summary.arm.value} session {summary.header.session}: {summary.off_shape} runs started the wrong way, above the "
+        f"bound of {summary.off_shape_bound} that retirements explain, so this arm is broken"
+    )
 
 
 def _hand_written_warning(summary: ArmSummary) -> str:

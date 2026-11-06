@@ -148,8 +148,18 @@ keeps three things apart:
 | Count | Meaning | Effect |
 |---|---|---|
 | Infrastructure failure | Vora failed, or the run has no result: a refusal, a broken stream, an unexpected exit reason, or a completed run where the runner never answered | Counted by cause, left out of latencies and programs per second. The command exits 1 |
-| Off shape | A run wasn't warm when the arm requires it, was warm in the `cold` arm, or used the wrong reuse mode | Counted, and stays in the latencies because it is part of what the arm costs. The command exits 1 |
+| Off shape | A run wasn't warm when the arm requires it, or was warm in the `cold` arm | Counted with its rate, and stays in the latencies because leaving it out would flatter the arm. A warm arm exits 1 only above the bound below, and the `cold` arm exits 1 on one |
+| Wrong reuse mode | A run reported a reuse mode its arm doesn't use | Counted. The command exits 1 |
 | Program verdict | What `verify` said about the candidate, by candidate index | Reported per class. Doesn't affect the exit code |
+
+**Why a warm arm can run cold.** When a member retires and its destroy returns, Vora gives the freed
+slot to the first waiter as a cold start if nothing else is in flight, and that run reports `warm`
+false. So a healthy warm arm has at most one cold run per retirement. A member retires only after
+`max_runs` runs, warmup included, so the bound is `(candidates + warmup) // max_runs`: 20 for 2,000
+candidates, 24 warmup runs and `max_runs` 100. A session long enough to reach `max_age` also gets
+`concurrency` more per 30 minutes. Above the bound the arm really is running cold. Each session prints
+the count, the rate and the bound, with its `retire_cause` counts and sandbox counts, so you can check
+the bound against what happened. A member that retires while idle shows on no run's `retire_cause`.
 
 A fast failure would flatter an arm, so two checks protect the verdicts:
 
@@ -298,9 +308,12 @@ its way to bypass reuse. That adds three differences to a plain cold start:
 run. The reset falls outside `wall_ms`, but the client holds its slot until `run_done`, so the reset
 lowers programs per second. On gVisor a reset starts `runsc` three times. A member retires after
 100 runs, or at the default `max_age` of 30 minutes. With `size` equal to `max_size`, its replacement
-starts only once its destroy returns, in the background. A borrower then waits, and the wait shows in
-`startup_ms`. It still counts as warm. Every arm sets `borrow_timeout_ms` to 60 seconds, so a slow
-replacement shows as a slow run. A longer wait is a refusal, and that is an infrastructure failure.
+starts only once its destroy returns. Until then a borrower waits for another member, and the wait
+shows in `startup_ms`. If nothing else is in flight when the destroy returns, the borrower starts cold
+instead and the run counts as cold ([Why a warm arm can run cold](#what-a-runs-result-means)). About
+1 in 100 runs lands on this path, so `warm`'s p99 sits at its edge. Every arm sets `borrow_timeout_ms`
+to 60 seconds, so a slow replacement shows as a slow run. A longer wait is a refusal, and that is an
+infrastructure failure.
 
 **`warm-no-reset`.** It runs what `warm` runs, minus the reset, so the gap to `warm` is the reset's cost
 and nothing more. The speed comes from leaving one run's files and processes for the next, which is

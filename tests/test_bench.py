@@ -523,6 +523,99 @@ def test_a_warm_arm_counts_a_run_that_was_not_warm(bencher: Bench) -> None:
     assert summary.wall.count == 6
 
 
+def test_a_healthy_warm_session_with_retirements_exits_0_and_shows_why(bencher: Bench, capsys: pytest.CaptureFixture[str]) -> None:
+    # At concurrency 1 nothing else is in flight, so Vora's next borrower starts cold after every retirement.
+    bencher.fake.destroy_s = 0.01
+
+    assert bencher.run("warm", "--concurrency", "1", "--candidates", "250") == 0
+
+    summary = load_raw(bencher.raw).arms[0]
+    assert summary.off_shape_bound == 252 // 100
+    assert summary.off_shape == 2, "one cold run per retirement"
+    assert summary.retire_causes == {"max_runs": 2}
+    assert (summary.sandboxes, summary.longest_sandbox_run) == (3, 100)
+    assert summary.wall.count == summary.judged == 250, "a cold run stays in the arm's numbers"
+    printed = capsys.readouterr().out
+    assert "not what this arm requires: 2 of 250 (0.8%), against a bound of 2" in printed
+    assert "Retired at check-in: {'max_runs': 2}. 3 sandboxes, 2 first runs, longest sandbox 100 runs" in printed
+
+
+def test_a_warm_session_with_runs_in_flight_gets_replacements_instead_of_cold_starts(bencher: Bench) -> None:
+    assert bencher.run("warm", "--concurrency", "2", "--candidates", "400") == 0
+
+    summary = load_raw(bencher.raw).arms[0]
+    assert summary.retire_causes["max_runs"] >= 3
+    assert summary.off_shape <= summary.off_shape_bound
+    assert summary.sandboxes > 2, "each member has its own id"
+
+
+def test_the_no_reset_arm_gets_the_same_bound(bencher: Bench, monkeypatch: pytest.MonkeyPatch) -> None:
+    use_admin(monkeypatch)
+    bencher.fake.destroy_s = 0.01
+
+    assert bencher.run("warm-no-reset", "--concurrency", "1", "--candidates", "150") == 0
+
+    summary = load_raw(bencher.raw).arms[0]
+    assert (summary.off_shape, summary.off_shape_bound) == (1, 1)
+
+
+def cold_answers_up_to(count: int) -> Any:
+    """Every run is right, and the first ``count`` that reach the fake start cold."""
+    seen = iter(range(10**6))
+
+    def script(pool: str, program: str) -> Script | None:
+        return answers(RIGHT, warm=next(seen) >= count)
+
+    return script
+
+
+def test_a_cold_run_above_the_bound_fails_the_arm_and_at_the_bound_does_not(bencher: Bench, capsys: pytest.CaptureFixture[str]) -> None:
+    arguments = ("--warmup", "0", "--candidates", "200")
+
+    bencher.fake.script_for = cold_answers_up_to(2)
+    assert bencher.run("warm", *arguments) == 0
+
+    bencher.fake.script_for = cold_answers_up_to(3)
+    assert bencher.run("warm", *arguments) == 1
+
+    above = load_raw(bencher.raw).arms[1]
+    assert (above.off_shape, above.off_shape_bound, above.failed) == (3, 2, True)
+    assert "above the bound of 2 that retirements explain, so this arm is broken" in capsys.readouterr().out
+
+
+def test_a_warm_arm_that_really_runs_cold_exits_1(bencher: Bench) -> None:
+    bencher.fake.script_for = lambda pool, program: answers(RIGHT, warm=False)
+
+    assert bencher.run("warm", "--candidates", "300", "--warmup", "0") == 1
+
+    summary = load_raw(bencher.raw).arms[0]
+    assert (summary.warm, summary.cold, summary.off_shape_bound) == (0, 300, 3)
+
+
+def test_a_session_longer_than_max_age_gets_room_for_those_retirements_too(bencher: Bench) -> None:
+    assert bencher.run("warm") == 0
+    rows = [json.loads(line) for line in bencher.raw.read_text().splitlines()]
+    for row in rows:
+        if row["type"] == "footer":
+            row["measured_seconds"] = 3700.0
+    bencher.raw.write_text("".join(json.dumps(row) + "\n" for row in rows))
+
+    assert load_raw(bencher.raw).arms[0].off_shape_bound == 2 * 2, "two max_age periods at concurrency 2, and no max_runs retirement"
+
+
+def test_a_cold_run_on_a_warm_arm_stays_in_its_latencies(bencher: Bench) -> None:
+    bencher.fake.script_for = cold_answers_up_to(1)
+    assert bencher.run("warm", "--warmup", "0", "--candidates", "200") == 0
+    rows = [json.loads(line) for line in bencher.raw.read_text().splitlines()]
+    for row in rows:
+        if row["type"] == "run" and row["warm"] is False:
+            row["wall_ms"] = 99_999.0
+    bencher.raw.write_text("".join(json.dumps(row) + "\n" for row in rows))
+
+    summary = load_raw(bencher.raw).arms[0]
+    assert (summary.cold, summary.wall.max) == (1, 99_999.0), "leaving it out would flatter the arm"
+
+
 def test_the_cold_arm_counts_a_run_that_was_warm(bencher: Bench) -> None:
     bencher.fake.runs.extend([answers(RIGHT)] * 3)
 
