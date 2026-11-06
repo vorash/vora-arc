@@ -2,4 +2,6 @@
 __pycache__/
 *.egg-info/
 data/
-results/
+results/*
+!results/bench/
+!results/limiter/

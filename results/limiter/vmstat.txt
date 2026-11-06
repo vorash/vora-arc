@@ -1,0 +1,3 @@
+bwrap one client c16: us 65 sy 19 idle 16 (mean of 8 vmstat samples)
+bwrap two clients c8+c8: us 66 sy 19 idle 15 (mean of 8 vmstat samples)
+gvisor one client c16: us 15 sy 32 idle 17 (mean of 8 vmstat samples)

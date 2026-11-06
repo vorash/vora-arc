@@ -1,0 +1,8 @@
+python-arc-bwrap   true                                   n=200 p50=    3.2 p90=    3.4 exit=[0]
+python-arc-bwrap   python3 -c pass                        n=200 p50=   12.8 p90=   13.2 exit=[0]
+python-arc-bwrap   python3 -S -c pass                     n=200 p50=   10.3 p90=   10.6 exit=[0]
+python-arc-bwrap   runner with a hand-written solution    n=200 p50=   40.9 p90=   42.0 exit=[0]
+python-arc         true                                   n=200 p50=   12.2 p90=   12.7 exit=[0]
+python-arc         python3 -c pass                        n=200 p50=   28.5 p90=   29.1 exit=[0]
+python-arc         python3 -S -c pass                     n=200 p50=   25.2 p90=   25.9 exit=[0]
+python-arc         runner with a hand-written solution    n=200 p50=   75.6 p90=   77.8 exit=[0]

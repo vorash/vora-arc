@@ -125,12 +125,17 @@ numbers already include this contention.
 
 ## The files
 
-The raw files and reports aren't in the repository, because `results/` is ignored. They are 27 MB per
-backend, and live in `results/bench/` on the machine that ran them:
+Every number on this page comes from a file in `results/`:
 
-- `experiment-1-bwrap.jsonl` and `experiment-1-gvisor.jsonl`
-- `leak-bwrap.xml`, `leak-gvisor.xml`, `vora-leak-bwrap.log` and `vora-leak-gvisor.log`
+| Path | What it holds |
+|---|---|
+| `results/bench/experiment-1-bwrap.jsonl`, `experiment-1-gvisor.jsonl` | One line per run, with each session's header and footer |
+| `results/bench/summary-bwrap.md`, `summary-gvisor.md` | `bench-summary` over those files and the leak reports |
+| `results/bench/leak-*.xml`, `vora-leak-*.log` | The leak reports |
+| `results/bench/exp-*.log` | `bench`'s output for each session |
+| `results/limiter/one-slot.txt`, `vmstat.txt`, `host.txt` | The floor table, the idle share and the host's CPU |
+| `results/limiter/bwrap-c*.jsonl`, `gvisor-c*.jsonl`, `limiter-sweep.txt` | The concurrency sweep |
+| `results/limiter/logged-*.jsonl` | One client at 16 and two clients at 8 |
+| `results/limiter/limiter.py`, `decomp.py` | The scripts behind the floor table and the time breakdown |
 
-The limiter runs are in `results/limiter/`: `one-slot.txt`, `vmstat.txt`, `host.txt` and one raw file per run.
-
-To rebuild the summary from them, see [Rebuild the summary](experiment-1.md#rebuild-the-summary).
+To rebuild a summary, see [Rebuild the summary](experiment-1.md#rebuild-the-summary).
