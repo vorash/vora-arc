@@ -205,6 +205,30 @@ def test_solve_runs_every_kind_of_program_in_real_sandboxes(
         assert len(server.requests) == first_requests, "the second run judges again but must not pay the model again"
 
 
+def test_solve_on_a_pool_gets_the_same_verdicts_and_stores_what_vora_reported(
+    data_dir: Path,
+    database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    server = FakeModel(canned)
+    with server.running():
+        monkeypatch.setenv("VLLM_URL", server.url)
+        monkeypatch.setenv("VLLM_MODEL", "fake-model")
+        monkeypatch.setenv("VORA_ARC_DATABASE_URL", database_url)
+        monkeypatch.setenv("VORA_MAX_CONCURRENCY", "4")
+        args = ["solve", "--pool", "--split", "training", "--samples", str(len(MIXED_SAMPLES)), "--data-dir", str(data_dir)]
+        assert cli.main(args) == 0, capsys.readouterr().err
+
+    verdicts = query(
+        database_url,
+        "SELECT verdict FROM candidates WHERE task_id = 'arc1/e2e00001' AND round = 1 ORDER BY sample_index",
+    )
+    assert [v for v, in verdicts] == [verdict for _, verdict in MIXED_SAMPLES]
+    measured = query(database_url, "SELECT bool_or(warm_start), count(reset_ms) > 0, count(audit_log_id) > 0 FROM runs")
+    assert measured == [(True, True, True)]
+
+
 @pytest.mark.usefixtures("ctrl_c_interrupts")
 def test_ctrl_c_destroys_every_sandbox_it_created(
     data_dir: Path, database_url: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
