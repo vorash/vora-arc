@@ -17,7 +17,7 @@ To measure what a pool costs, see [How to run experiment 1](experiment-1.md).
 |---|---|---|
 | `warm_start` | `false` | `run.warm` |
 | `reset_ms` | NULL | `done.reset_ms`, the run's own reset after it exited |
-| `audit_log_id` | NULL | `exit.execution_id` |
+| `audit_log_id` | `exec.execution_id` | `exit.execution_id` |
 | `startup_ms` | Client's clock, the create call | Client's clock, request to `run` frame |
 | `exec_ms` | Client's clock, the exec call | Client's clock, `run` frame to `exit` frame |
 | `peak_mem_bytes` | `stats()` | `exit.usage`, only when the kernel scoped the peak to this run |
@@ -34,9 +34,6 @@ failure and has no row.
 `warm_start` means the member was running before the run asked for it. It doesn't mean the
 member ran anything before: a pre-started member's first run is warm too, with
 `sandbox_run` 1 and no prepared reset.
-
-The fresh-sandbox path could fill `audit_log_id` now, because the SDK's exec exit chunk
-carries `execution_id`. It leaves the column NULL, as `tests/test_solve_e2e.py` pins.
 
 A pooled run's exit reason and counters decide its status, with the same order as a fresh
 sandbox's `stats()`: `oom_kills`, then `pids_limit_hits`, then the reason. The counters
@@ -76,8 +73,8 @@ and `solve` exits non-zero. Nothing declares the pool again in the middle of a r
 
 ## What a pool asks of a profile
 
-A pool's spec is narrower than a plain sandbox's, and the shipped profiles fit it.
-`tests/test_pool_client.py` fails if a profile stops fitting.
+A pool's spec is narrower than a plain sandbox's. The shipped profiles meet its rules, and
+`tests/test_pool_client.py` fails if one stops meeting them.
 
 | Rule, from `internal/pool/spec.go` | `python-arc` (gVisor) | `python-arc-bwrap` |
 |---|---|---|
@@ -87,6 +84,24 @@ A pool's spec is narrower than a plain sandbox's, and the shipped profiles fit i
 
 A profile that breaks a rule gets a 400 at declare, and `vora-arc` exits with the API's
 message and the profile's name.
+
+These rules aren't the whole requirement. A pool with `size` above 0 also needs a backend that can
+reset a sandbox, and that depends on the Vora you run:
+
+| Backend | What a pool with members needs |
+|---|---|
+| `bwrap` | Vora `main` has it |
+| `gvisor` | The Vora release that contains [vorash/vora#150](https://github.com/vorash/vora/pull/150). That pull request is open, so no release has it yet |
+
+On a Vora without #150, `solve --pool` with `python-arc`, and the `warm` and `warm-no-reset` arms, get
+this at declare, so nothing runs and the command exits non-zero:
+
+```text
+pool vora-arc-bench-warm-1a2b3c was refused for profile python-arc: pool: backend cannot reset sandboxes: "gvisor"
+```
+
+The `cold` arm still declares on that Vora, because a pool of size 0 reuses nothing. This comes from
+reading `internal/pool/spec.go`, and no real server has answered it here.
 
 Under bwrap, an idle sandbox holds 10 or 11 tasks, so `pids = 16` leaves the workload 5.
 The runner needs 2: itself and one worker. Under gVisor the limit counts the Sentry's
@@ -126,7 +141,8 @@ runs in the sandbox's cgroup. `test_filling_tmp_runs_into_the_memory_limit` expe
 from a program that writes 2 GB. It hasn't run yet, so treat this paragraph as read from the
 code and not as measured. Two limits sit beside it:
 
-- Vora sets no swap limit, so on a host with swap, tmpfs pages can move to swap.
+- Vora sets a swap limit of 0 (`memory.swap.max` in `internal/cgroup/subtree.go`, `MemorySwapMax` in
+  `internal/cgroup/systemd.go`), so pages charged to the sandbox can't move to swap, tmpfs pages included.
 - The sandbox's disk quota covers the paths in `quotaPaths`, and `/tmp` isn't one of them.
 
 The spec's other demand for this case is that the next run on the same sandbox starts clean.

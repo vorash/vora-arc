@@ -1,8 +1,9 @@
 """`vora-arc bench`: one arm of experiment 1, and a summary rebuilt from raw files.
 
 The three arms run the same corpus in the same order at the same concurrency, and differ
-only in pool shape (`client.pool_shape`). Every number in a summary comes from the raw
-files. See docs/experiment-1.md for what limits each arm's number.
+in pool shape (`client.pool_shape`), which isn't neutral: it narrows the gap between `cold`
+and `warm`. Every number in a summary comes from the raw files. See docs/experiment-1.md
+for that bias and for what limits each arm's number.
 """
 
 from __future__ import annotations

@@ -15,7 +15,7 @@ import pytest
 from fake_pools import ADMIN_KEY, TENANT_KEY, FakePools, Frame, Frames, Refuse, Script, stdout_frame
 
 from vora_arc import bench, cli
-from vora_arc.bench_summary import UNSAFE_LABEL, Scope, load_raw, percentiles, render_summary, summary_exit_code
+from vora_arc.bench_summary import BUSY_LOAD_PER_CPU, UNSAFE_LABEL, Scope, load_raw, percentiles, render_summary, summary_exit_code
 from vora_arc.client import PoolMode
 from vora_arc.corpus import CandidateClass, build_corpus, composition, load_solutions
 from vora_arc.leak_report import WRITER_CASES, LeakReport, read_leak_suites
@@ -1006,6 +1006,22 @@ def test_the_no_reset_arm_goes_through_the_admin_gate(bencher: Bench, monkeypatc
     assert {call.key for call in bencher.fake.calls("POST", "/run")} == {TENANT_KEY}
 
 
+def test_a_warm_arm_refused_for_its_backend_is_a_loud_incomplete_session_not_a_fit(
+    bencher: Bench, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert bencher.run("cold") == 0
+    bencher.fake.declare_error = (400, 'pool: backend cannot reset sandboxes: "gvisor"')
+
+    with pytest.raises(SystemExit, match=r'python-arc.*backend cannot reset sandboxes: "gvisor"'):
+        bencher.run("warm")
+
+    capsys.readouterr()
+    text = render_summary(load_raw(bencher.raw))
+    assert "| warm | 0, **plus 1 incomplete** | 0 |" in text
+    assert "warm has 0 complete sessions: fewer than 5" in text
+    assert "(0 of 6 measured)" in text
+
+
 def test_warm_runs_wait_for_the_pool_to_fill(bencher: Bench) -> None:
     bencher.fake.starting_polls = 3
 
@@ -1046,6 +1062,17 @@ def test_an_unconfirmed_image_source_is_said_out_loud(bencher: Bench, capsys: py
 
     assert "image resolved via: unconfirmed" in capsys.readouterr().out
     assert "vorash/vora#148" in render_summary(load_raw(bencher.raw))
+
+
+def test_the_docs_loop_waits_for_the_load_the_warning_fires_on() -> None:
+    # Without this the warning fires on most back-to-back sessions, and then it says nothing.
+    doc = (Path(__file__).resolve().parents[1] / "docs" / "experiment-1.md").read_text()
+    loop = doc[doc.index("## Run the arms in turn") :]
+    loop = loop[: loop.index("done\ndone")]
+
+    assert f"$1 <= {BUSY_LOAD_PER_CPU} * cpus" in loop
+    assert "/proc/loadavg" in loop
+    assert loop.index("settle\n") < loop.index("uv run vora-arc bench")
 
 
 def test_a_busy_machine_is_said_out_loud(

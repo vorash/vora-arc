@@ -72,6 +72,12 @@ You need:
   reserves CPU and memory for all of `max_size` when a pool is declared, so the `cold` arm needs room
   for twice the concurrency. If the runner hasn't got it, the declare is refused and `bench` exits
   with the API's message. Lower `--concurrency` on every arm.
+- For `warm` and `warm-no-reset` on gVisor, the Vora release that contains
+  [vorash/vora#150](https://github.com/vorash/vora/pull/150), which is open, so no release has it yet.
+  Without it the declare is refused with `backend cannot reset sandboxes`, `bench` exits with that
+  message, and the summary lists the session as incomplete. `cold` still runs there, so a gVisor
+  summary with only `cold` numbers means this. See
+  [What a pool asks of a profile](pools.md#what-a-pool-asks-of-a-profile).
 - The image: run `sandbox/build.sh` on the host.
 - The data: run `scripts/download_data.sh`.
 
@@ -199,15 +205,25 @@ reserves twice the concurrency.
 RAW=results/bench/experiment-1-bwrap.jsonl
 CONCURRENCY=$(( $(nproc) / 2 ))
 arms=(cold warm warm-no-reset)
+settle() {
+  until awk -v cpus="$(nproc)" '{ exit !($1 <= 0.25 * cpus) }' /proc/loadavg; do sleep 5; done
+}
 for round in 1 2 3 4 5; do
   for offset in 0 1 2; do
     mode=${arms[$(( (round + offset) % 3 ))]}
+    settle
     uv run vora-arc bench --mode "$mode" --seed "$round" --candidates 2000 \
       --concurrency "$CONCURRENCY" --profile profiles/python-arc-bwrap.toml \
       --image-resolved-via containerd --raw "$RAW" || echo "round $round, $mode: exit $?"
   done
 done
 ```
+
+`settle` waits for the 1-minute load to fall to the level the summary's "this machine was busy" warning
+fires above, a quarter of the CPUs. A session at this concurrency leaves the load near half the CPUs, so
+without the wait most sessions would start under that warning, and it would stop meaning anything. By
+the load average's decay this takes under a minute on an otherwise idle host. That is arithmetic, not a
+measurement. If `settle` doesn't end, something else is using the host.
 
 The summary records the order the sessions ran in, so you can check the rotation. To run one session
 of the spec's full size, omit `--candidates`: it defaults to 10,000. `--warmup` defaults to three times
@@ -226,9 +242,17 @@ and add at most 80 / concurrency seconds for them (see [The corpus](#the-corpus)
 different `--concurrency` changes `R`.
 
 Each session appends to the raw file: a header, one line per run, and a footer. Each arm deletes its
-pool at the end. A killed `bench` leaves its pool holding capacity. Delete it with
-`curl -X DELETE "$VORA_API_URL/v1/pools/<name>" -H "Authorization: Bearer $VORA_API_KEY"`, with
-the name from the first lines of output.
+pool at the end. A killed `bench` leaves its pool holding capacity. Delete it with the name from the
+first lines of output. An answer of 202 means the pool is still draining, and it keeps its route and
+its reservation, so repeat until the answer is something else:
+
+```sh
+until [ "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$VORA_API_URL/v1/pools/<name>" \
+  -H "Authorization: Bearer $VORA_API_KEY")" != 202 ]; do sleep 2; done
+```
+
+Each call waits up to about 25 seconds for running commands. A final answer of 204 or 404 means the pool
+is gone. Anything else is an error to read, so run the `curl` once more without `-o /dev/null` to see it.
 
 ## Run the leak tests
 
@@ -334,7 +358,8 @@ its way to bypass reuse. That adds three differences to a plain cold start:
 
 **`warm`.** The program's own run dominates `wall_ms`: the runner starts a Python interpreter for each
 run. The reset falls outside `wall_ms`, but the client holds its slot until `run_done`, so the reset
-lowers programs per second. On gVisor a reset starts `runsc` three times. A member retires after
+lowers programs per second. On gVisor, in the code of vorash/vora#150 as measured in that work's build
+log, a reset starts `runsc` three times. Check this again on the release you run. A member retires after
 100 runs, or at the default `max_age` of 30 minutes. With `size` equal to `max_size`, its replacement
 starts only once its destroy returns. Until then a borrower waits for another member, and the wait
 shows in `startup_ms`. If nothing else is in flight when the destroy returns, the borrower starts cold
@@ -342,6 +367,21 @@ instead and the run counts as cold ([Why a warm arm can run cold](#what-a-runs-r
 1 in 100 runs lands on this path, so `warm`'s p99 sits at its edge. Every arm sets `borrow_timeout_ms`
 to 60 seconds, so a slow replacement shows as a slow run. A longer wait is a refusal, and that is an
 infrastructure failure.
+
+**Which way the shapes bias the gap: they narrow it.** Three differences favour `cold`, so the measured
+gap between `cold` and `warm` is smaller than what a cold start really costs:
+
+- `cold` has twice the slots, so its next start overlaps the previous destroy. `warm` has no such slots:
+  a retired member holds its slot until its destroy returns, and its replacement starts only then.
+- `cold`'s destroy runs after `run_done`, so no run's `cycle_ms` holds it. It shows only as contention.
+  `warm`'s wait for a destroy shows in `startup_ms`.
+- A `cold` sandbox doesn't deny IPC and captures no reset manifest, as listed above.
+
+Giving `warm` twice the slots too wouldn't remove the wait. Vora starts a replacement only when the
+destroy returns (`Pool.remove`), and with a run in flight a borrower queues whatever slots are free. The
+simulation behind this ran Vora's real pool code against fake sandboxes with made-up durations, and
+doubling `max_size` left the cold-run counts about the same, so it is no measurement of a host. It would
+also double what `warm` reserves. So the shape stays, and this bias stays in the numbers.
 
 **`warm-no-reset`.** It runs what `warm` runs, minus the reset, so the gap to `warm` is the reset's cost
 and nothing more. The speed comes from leaving one run's files and processes for the next, which is
@@ -351,8 +391,12 @@ matching the other arms' doesn't make it safe: nothing in the corpus tries to le
 
 **All arms.**
 
-- The client can be the limiter. It is one Python process parsing every chunk. Compare `client CPU`
-  with the measured time in the footer. If they are close, you measured the client.
+- The client can be the limiter. It is one Python process parsing every chunk. The footer records its
+  CPU over the measured window alone, without warmup or the pool's delete, and the summary warns when
+  that passes 50% of the window's wall time. Near 100% you measured the client, and queueing in its
+  event loop starts before that.
+- httpx keeps 20 idle connections by default, so above concurrency 20 a slot would reconnect for each
+  run. `client.connect` turns those limits off, so this adds no reconnects at any concurrency.
 - Each sandbox has one CPU, so concurrency above the host's core count measures contention.
 - Check the arithmetic: programs per second can't exceed the concurrency times 1000 divided by the
   mean `cycle_ms`. A figure above that measured something else.

@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator, Callable, Iterator
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from fake_pools import ADMIN_KEY, TENANT_KEY, FakePools, Frames, LivePool, Placement, Refuse, stdout_frame
 from vora import GatewayTimeoutError, Pool, PoolNotLoadedError, PoolNotOnRunnerError, RateLimitedError, Vora
@@ -373,9 +374,37 @@ async def test_a_pool_is_deleted_even_when_the_work_inside_failed(fake: FakePool
     assert len(fake.calls("DELETE")) == 1
 
 
+async def test_a_backend_that_cannot_reset_is_refused_by_name_and_not_read_as_a_fit(fake: FakePools, vora: Vora) -> None:
+    # Vora without vorash/vora#150 can't reset a gVisor member, and answers a warm declare with this.
+    fake.declare_error = (400, 'pool: backend cannot reset sandboxes: "gvisor"')
+
+    with pytest.raises(SystemExit, match=r'python-arc.*backend cannot reset sandboxes: "gvisor"'):
+        async with open_pool(vora, PROFILE, "py", PoolMode.WARM, 2):
+            pass
+
+    assert fake.calls("POST", "/run") == []
+
+
+async def test_connections_stay_open_past_httpxs_default_of_twenty(monkeypatch: pytest.MonkeyPatch) -> None:
+    built: list[httpx.Limits] = []
+    real = httpx.AsyncClient
+
+    def client_with(*args: Any, limits: httpx.Limits, **kwargs: Any) -> httpx.AsyncClient:
+        built.append(limits)
+        return real(*args, limits=limits, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", client_with)
+    async with connect(PROFILE):
+        pass
+
+    assert built[0].max_keepalive_connections is None
+    assert built[0].max_connections is None
+
+
 @pytest.mark.parametrize("path", sorted((ROOT / "profiles").glob("*.toml")), ids=lambda path: path.stem)
-def test_every_shipped_profile_fits_what_a_pool_accepts(path: Path) -> None:
-    """Pools take only network mode none, and a pids limit at or above the backend's floor."""
+def test_every_shipped_profile_meets_the_rules_of_a_pool_spec(path: Path) -> None:
+    """Network mode none, and a pids limit at or above the backend's floor. This says nothing about
+    whether the backend can reset: on gVisor that needs a Vora release with vorash/vora#150."""
     profile = load_profile(path)
     assert profile.network == "none"
     assert profile.pids >= {"bwrap": 12, "gvisor": 64}[profile.backend]
@@ -391,6 +420,7 @@ def test_the_pids_floors_above_are_voras_own() -> None:
     assert "minPidsBwrap  = 12" in source
     assert "minPidsGvisor = 64" in source
     assert "t.Network.Mode != runtime.NetworkNone" in source
+    assert 'errors.New("pool: backend cannot reset sandboxes")' in source
 
 
 def _golden() -> Path:

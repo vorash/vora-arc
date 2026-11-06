@@ -68,7 +68,9 @@ async def connect(profile: Profile) -> AsyncIterator[Vora]:
     # httpx's 5 s default read timeout is shorter than a batch that prints
     # nothing for 10 s, and a timeout would be retried as a transport error.
     timeout = httpx.Timeout(profile.batch_timeout_seconds + 30.0)
-    async with httpx.AsyncClient(timeout=timeout) as http:
+    # httpx keeps 20 idle connections by default, and above that every slot would reconnect per run.
+    limits = httpx.Limits(max_connections=None, max_keepalive_connections=None)
+    async with httpx.AsyncClient(timeout=timeout, limits=limits) as http:
         yield Vora(client=http)
 
 
@@ -104,7 +106,11 @@ async def run_batch(
 
 
 def pool_shape(mode: PoolMode, concurrency: int) -> dict[str, Any]:
-    """The spec fields that make a pool one of the experiment's arms. Nothing else differs."""
+    """The spec fields that make a pool one of the experiment's arms.
+
+    The shapes aren't neutral. `cold` gets twice the slots and destroys outside its runs, which
+    narrows the gap to `warm`: docs/experiment-1.md says how.
+    """
     if mode is PoolMode.COLD:
         # A retired member keeps its slot until its destroy returns. Twice the slots let the
         # next start overlap that destroy, so a cold run doesn't wait for the previous one's.
