@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import itertools
 import json
 import logging
 import os
 import re
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -22,8 +23,13 @@ log = logging.getLogger(__name__)
 TEMPERATURE = 0.8
 MAX_TOKENS = 4096
 MAX_SAMPLES_PER_REQUEST = 16
+# A request lasts as long as its longest sample, and most of its samples end long before that.
+# On an L4, vLLM's throughput stops rising near 64 running samples, so more than 4 requests
+# of 16 can be open while stragglers leave most of each one idle.
+MAX_OPEN_REQUESTS = 8
 RETRY_DELAYS_S: tuple[float, ...] = (1.0, 2.0, 4.0, 8.0)
-REQUEST_TIMEOUT_S = 600.0
+# 4096 tokens at the 214 ms per token measured at saturation take about 880 s.
+REQUEST_TIMEOUT_S = 1200.0
 
 _RETRYABLE_STATUS = {408, 409, 425, 429}
 _PYTHON_FENCES = {"", "python", "python3", "py"}
@@ -143,21 +149,39 @@ async def sample(
     task_id: str,
     prompt: str,
     n: int,
+    *,
+    gate: asyncio.Semaphore | None = None,
 ) -> Sampled:
     """Return completions 0 to n-1, requesting only the ones the cache doesn't hold.
 
-    Each response is cached before the next request, so a crash loses at most one request.
+    Each response is cached as it arrives, so a crash loses only the requests still open.
+    `gate` limits the open requests, and a run shares one across the tasks it solves at once.
     """
+    open_requests = gate or asyncio.Semaphore(MAX_OPEN_REQUESTS)
     key = prompt_hash(config, prompt)
     held = {index: text for index, text in (await cache.load_completions(task_id, key)).items() if index < n}
     cached = len(held)
     request_ms: int | None = None
-    while missing := [index for index in range(n) if index not in held]:
-        texts, elapsed_ms = await _request(http, config, prompt, min(len(missing), MAX_SAMPLES_PER_REQUEST))
-        request_ms = (request_ms or 0) + elapsed_ms
+
+    async def fill(indices: Sequence[int]) -> int:
+        async with open_requests:
+            texts, elapsed_ms = await _request(http, config, prompt, len(indices))
         # A run racing this one may have saved these samples first. Candidates point at the
         # stored row, so judging this response's text instead would judge a different program.
-        held.update(await cache.save_completions(task_id, key, config.model, dict(zip(missing, texts))))
+        held.update(await cache.save_completions(task_id, key, config.model, dict(zip(indices, texts))))
+        return elapsed_ms
+
+    while missing := [index for index in range(n) if index not in held]:
+        batches = itertools.batched(missing, MAX_SAMPLES_PER_REQUEST)
+        # Every request finishes before an error is raised, so each response that arrives is cached.
+        outcomes = await asyncio.gather(*(fill(batch) for batch in batches), return_exceptions=True)
+        elapsed: list[int] = []
+        for outcome in outcomes:
+            if isinstance(outcome, BaseException):
+                raise outcome
+            elapsed.append(outcome)
+        # They overlap, so the longest is the closest to the time with a request open.
+        request_ms = (request_ms or 0) + max(elapsed)
     return Sampled(key, tuple(held[index] for index in range(n)), n - cached, cached, request_ms)
 
 

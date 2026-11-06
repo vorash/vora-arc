@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS solve_runs (
     profile text NOT NULL,
     backend text NOT NULL,
     max_concurrency integer NOT NULL,
+    tasks_at_once integer NOT NULL,
     status text NOT NULL CHECK (status IN ('running', 'finished', 'failed', 'interrupted')),
     error text,
     started_at timestamptz NOT NULL DEFAULT now(),
@@ -135,6 +136,7 @@ class RunSettings:
     profile: str
     backend: str
     max_concurrency: int
+    tasks_at_once: int = 1
 
 
 @dataclass(frozen=True)
@@ -256,7 +258,7 @@ class Store:
         run_id = f"{datetime.now(UTC):%Y%m%dT%H%M%SZ}-{secrets.token_hex(3)}"
         await self._connection.execute(
             "INSERT INTO solve_runs (id, dataset, split, task_limit, samples, refine, model, profile, backend, "
-            "max_concurrency, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'running')",
+            "max_concurrency, tasks_at_once, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'running')",
             (
                 run_id,
                 settings.dataset,
@@ -268,6 +270,7 @@ class Store:
                 settings.profile,
                 settings.backend,
                 settings.max_concurrency,
+                settings.tasks_at_once,
             ),
         )
         return run_id
@@ -406,6 +409,7 @@ class Store:
             row["profile"],
             row["backend"],
             row["max_concurrency"],
+            row["tasks_at_once"],
         )
         run = SolveRun(row["id"], settings, row["status"], row["error"], row["started_at"], row["finished_at"])
         return RunData(run, tasks, candidates, runs, phases, answers)

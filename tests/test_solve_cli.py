@@ -206,6 +206,34 @@ def test_refine_records_round_two(solver: Solver, database_url: str, capsys: pyt
     assert "Round 2, of the tasks it refined | 1 / 1 (100.0%)" in text
 
 
+def test_tasks_at_once_overlap_store_every_result_and_drop_only_the_figure_overlap_breaks(
+    solver: Solver, database_url: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    solver.model.delay_s = 0.2
+    assert solver.solve("--samples", "4", "--tasks-at-once", "3") == 0
+    run_id = run_ids(capsys)[0]
+    assert solver.model.peak_open_requests == 3
+    assert query(database_url, "SELECT count(*) FROM candidates") == [(12,)]
+    assert query(database_url, "SELECT tasks_at_once FROM solve_runs") == [(3,)]
+
+    text = solver.report(run_id)
+    assert "Overall, 2 attempts | 3 / 3 (100.0%)" in text
+    assert f"- Time with a model request open, the lower bound: {NOT_MEASURED}\n" in text
+    assert "tasks overlapped" in text
+
+
+def test_an_outage_with_tasks_at_once_fails_the_run_and_the_next_run_resumes(
+    solver: Solver, database_url: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    solver.model.faults.extend([500] * 6)
+    assert solver.solve("--samples", "4", "--tasks-at-once", "3") == 1
+    assert [row[0] for row in query(database_url, "SELECT status FROM solve_runs")] == ["failed"]
+    assert "failed" in capsys.readouterr().err
+
+    assert solver.solve("--samples", "4", "--tasks-at-once", "3") == 0
+    assert query(database_url, "SELECT count(DISTINCT task_id) FROM candidates") == [(3,)]
+
+
 def test_a_model_outage_fails_the_run_keeps_earlier_tasks_and_the_next_run_resumes(
     solver: Solver, database_url: str, capsys: pytest.CaptureFixture[str]
 ) -> None:

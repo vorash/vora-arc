@@ -177,7 +177,14 @@ def time_split(data: RunData) -> list[PhaseTime]:
         else ""
     )
     return [
-        PhaseTime("generation", generation, "wall-clock with a model request open", generation_note),
+        PhaseTime(
+            "generation",
+            generation,
+            "sum over tasks that overlap, so it can exceed the run's wall-clock"
+            if data.run.settings.tasks_at_once > 1
+            else "wall-clock with a model request open",
+            generation_note,
+        ),
         PhaseTime("scheduling", _sum_ms(p.scheduling_ms for p in data.phases), "sum over jobs of the wait for a slot"),
         PhaseTime("startup", _sum_ms(r.startup_ms for r in data.runs), "sum over sandbox runs, seen from the client"),
         PhaseTime("execution", _sum_ms(r.exec_ms for r in data.runs), "sum over sandbox runs, seen from the client"),
@@ -224,6 +231,9 @@ def cost(data: RunData, gpu_eur_per_hour: float | None) -> Cost:
     if cached:
         notes.append(f"{cached} of {fresh + cached} completions came from the cache and were paid for by an earlier run")
         notes.append("cost per task is not measured: dividing by every task would understate what a task costs")
+    if data.run.settings.tasks_at_once > 1:
+        request_hours = None
+        notes.append("the lower bound is not measured: tasks overlapped, so their request times can't be added")
     if gpu_eur_per_hour is None:
         notes.append("GPU_EUR_PER_HOUR is not set")
 
@@ -244,7 +254,8 @@ def render_markdown(data: RunData, gpu_eur_per_hour: float | None, charts: dict[
         f"- Dataset: {settings.dataset} {settings.split}, {len(data.tasks)} tasks"
         + (f" (limit {settings.task_limit})" if settings.task_limit else ""),
         f"- Model: {settings.model}; {settings.samples} samples per task; refinement {'on' if settings.refine else 'off'}",
-        f"- Sandbox: profile {settings.profile}, backend {settings.backend}, at most {settings.max_concurrency} at a time",
+        f"- Sandbox: profile {settings.profile}, backend {settings.backend}, at most {settings.max_concurrency} at a time; "
+        f"{settings.tasks_at_once} task(s) at once",
         f"- Status: {data.run.status}" + (f": {_inline_text(data.run.error)}" if data.run.error else ""),
         f"- Total wall-clock: {_run_wall_clock(data)}",
     ]
