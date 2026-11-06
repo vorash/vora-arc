@@ -1,0 +1,82 @@
+vora commit: 4260c8c1086fe338e01eccc2c67fc6577cfd65c4
+=== RUN   TestLeakMatrixGvisor
+    gvisor_reuse_test.go:198: gVisor Method 2 requires a rootlesskit userns or root (run under rootlesskit)
+--- SKIP: TestLeakMatrixGvisor (0.00s)
+=== RUN   TestPoolLeakMatrix
+=== RUN   TestPoolLeakMatrix/bwrap
+=== RUN   TestPoolLeakMatrix/bwrap/L1_scratch_files/0
+=== RUN   TestPoolLeakMatrix/bwrap/L2_bind_mount_files/0
+=== RUN   TestPoolLeakMatrix/bwrap/L3_vora/0
+=== RUN   TestPoolLeakMatrix/bwrap/L4_env/0
+=== RUN   TestPoolLeakMatrix/bwrap/L5_background_processes/0
+=== RUN   TestPoolLeakMatrix/bwrap/L6_holder_of_stdout/0
+    pool_leak_test.go:453: a holder of stdout ended with reason:TIMEOUT_EXCEEDED  usage:{cpu_millis:2  memory_peak_bytes:10530816  memory_peak_scope:PEAK_SCOPE_WINDOW}  execution_id:"exe_01M6R75SGYHEMB3CE6SXMSPAVH" after 1.003599464s
+=== RUN   TestPoolLeakMatrix/bwrap/L6_holder_of_stdout_past_a_timeout/0
+    pool_leak_test.go:453: a holder of stdout ended with reason:TIMEOUT_EXCEEDED  usage:{cpu_millis:3  memory_peak_bytes:10985472  memory_peak_scope:PEAK_SCOPE_WINDOW}  execution_id:"exe_01M6R75TJXX67YXDNG2YRB9GB2" after 2.003587247s
+=== RUN   TestPoolLeakMatrix/bwrap/L1_scratch_files/1
+=== RUN   TestPoolLeakMatrix/bwrap/L2_bind_mount_files/1
+=== RUN   TestPoolLeakMatrix/bwrap/L3_vora/1
+=== RUN   TestPoolLeakMatrix/bwrap/L4_env/1
+=== RUN   TestPoolLeakMatrix/bwrap/L5_background_processes/1
+=== RUN   TestPoolLeakMatrix/bwrap/L6_holder_of_stdout/1
+    pool_leak_test.go:453: a holder of stdout ended with reason:TIMEOUT_EXCEEDED  usage:{cpu_millis:2  memory_peak_bytes:12603392  memory_peak_scope:PEAK_SCOPE_WINDOW}  execution_id:"exe_01M6R75Y0EZ733ZAVRZHVR8AZX" after 1.00196902s
+=== RUN   TestPoolLeakMatrix/bwrap/L6_holder_of_stdout_past_a_timeout/1
+    pool_leak_test.go:453: a holder of stdout ended with reason:TIMEOUT_EXCEEDED  usage:{cpu_millis:3  memory_peak_bytes:11919360  memory_peak_scope:PEAK_SCOPE_WINDOW}  execution_id:"exe_01M6R75Z2F0KYS4EGN5QAGFSJV" after 2.003088838s
+=== RUN   TestPoolLeakMatrix/gvisor
+    pool_leak_test.go:245: gVisor Method 2 requires a rootlesskit userns or root (run under rootlesskit)
+--- PASS: TestPoolLeakMatrix (9.73s)
+    --- PASS: TestPoolLeakMatrix/bwrap (9.72s)
+        --- PASS: TestPoolLeakMatrix/bwrap/L1_scratch_files/0 (0.32s)
+        --- PASS: TestPoolLeakMatrix/bwrap/L2_bind_mount_files/0 (0.30s)
+        --- PASS: TestPoolLeakMatrix/bwrap/L3_vora/0 (0.16s)
+        --- PASS: TestPoolLeakMatrix/bwrap/L4_env/0 (0.09s)
+        --- PASS: TestPoolLeakMatrix/bwrap/L5_background_processes/0 (0.57s)
+        --- PASS: TestPoolLeakMatrix/bwrap/L6_holder_of_stdout/0 (1.09s)
+        --- PASS: TestPoolLeakMatrix/bwrap/L6_holder_of_stdout_past_a_timeout/0 (2.09s)
+        --- PASS: TestPoolLeakMatrix/bwrap/L1_scratch_files/1 (0.30s)
+        --- PASS: TestPoolLeakMatrix/bwrap/L2_bind_mount_files/1 (0.30s)
+        --- PASS: TestPoolLeakMatrix/bwrap/L3_vora/1 (0.16s)
+        --- PASS: TestPoolLeakMatrix/bwrap/L4_env/1 (0.09s)
+        --- PASS: TestPoolLeakMatrix/bwrap/L5_background_processes/1 (0.57s)
+        --- PASS: TestPoolLeakMatrix/bwrap/L6_holder_of_stdout/1 (1.09s)
+        --- PASS: TestPoolLeakMatrix/bwrap/L6_holder_of_stdout_past_a_timeout/1 (2.09s)
+    --- SKIP: TestPoolLeakMatrix/gvisor (0.01s)
+=== RUN   TestPoolDisconnectMidRun
+=== RUN   TestPoolDisconnectMidRun/bwrap
+    pool_leak_test.go:761: 300 disconnects in 54.739439767s: 100 saw output, 0 replaced the member, 0 members died under the probe, 200 reused after a run known to have started, stats idle:1  runs_total:591  warm_runs_total:591  resets_total:591
+=== RUN   TestPoolDisconnectMidRun/gvisor
+    pool_leak_test.go:245: gVisor Method 2 requires a rootlesskit userns or root (run under rootlesskit)
+--- PASS: TestPoolDisconnectMidRun (55.26s)
+    --- PASS: TestPoolDisconnectMidRun/bwrap (55.25s)
+    --- SKIP: TestPoolDisconnectMidRun/gvisor (0.01s)
+=== RUN   TestBwrapReusableLeakMatrix
+=== RUN   TestBwrapReusableLeakMatrix/L1_scratch_files/0
+=== RUN   TestBwrapReusableLeakMatrix/L2_bind_mount_files/0
+=== RUN   TestBwrapReusableLeakMatrix/L3_vora/0
+=== RUN   TestBwrapReusableLeakMatrix/L4_env/0
+=== RUN   TestBwrapReusableLeakMatrix/L5_background_processes/0
+=== RUN   TestBwrapReusableLeakMatrix/L6_holder_of_stdout/0
+=== RUN   TestBwrapReusableLeakMatrix/L6_holder_of_stdout_past_a_timeout/0
+=== RUN   TestBwrapReusableLeakMatrix/L1_scratch_files/1
+=== RUN   TestBwrapReusableLeakMatrix/L2_bind_mount_files/1
+=== RUN   TestBwrapReusableLeakMatrix/L3_vora/1
+=== RUN   TestBwrapReusableLeakMatrix/L4_env/1
+=== RUN   TestBwrapReusableLeakMatrix/L5_background_processes/1
+=== RUN   TestBwrapReusableLeakMatrix/L6_holder_of_stdout/1
+=== RUN   TestBwrapReusableLeakMatrix/L6_holder_of_stdout_past_a_timeout/1
+--- PASS: TestBwrapReusableLeakMatrix (6.40s)
+    --- PASS: TestBwrapReusableLeakMatrix/L1_scratch_files/0 (0.36s)
+    --- PASS: TestBwrapReusableLeakMatrix/L2_bind_mount_files/0 (0.35s)
+    --- PASS: TestBwrapReusableLeakMatrix/L3_vora/0 (0.18s)
+    --- PASS: TestBwrapReusableLeakMatrix/L4_env/0 (0.08s)
+    --- PASS: TestBwrapReusableLeakMatrix/L5_background_processes/0 (0.61s)
+    --- PASS: TestBwrapReusableLeakMatrix/L6_holder_of_stdout/0 (0.38s)
+    --- PASS: TestBwrapReusableLeakMatrix/L6_holder_of_stdout_past_a_timeout/0 (1.15s)
+    --- PASS: TestBwrapReusableLeakMatrix/L1_scratch_files/1 (0.33s)
+    --- PASS: TestBwrapReusableLeakMatrix/L2_bind_mount_files/1 (0.35s)
+    --- PASS: TestBwrapReusableLeakMatrix/L3_vora/1 (0.18s)
+    --- PASS: TestBwrapReusableLeakMatrix/L4_env/1 (0.08s)
+    --- PASS: TestBwrapReusableLeakMatrix/L5_background_processes/1 (0.61s)
+    --- PASS: TestBwrapReusableLeakMatrix/L6_holder_of_stdout/1 (0.38s)
+    --- PASS: TestBwrapReusableLeakMatrix/L6_holder_of_stdout_past_a_timeout/1 (1.14s)
+PASS

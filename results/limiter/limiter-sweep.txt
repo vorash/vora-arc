@@ -1,0 +1,88 @@
+== bwrap c=1 rc=0
+- Measured 300 of 300 planned: 300 with a verdict, 0 infrastructure failures
+%Cpu(s):  5.4 us,  1.7 sy,  0.0 ni, 92.7 id,  0.2 wa,  0.0 hi,  0.1 si,  0.0 st 
+3959138 vora      20   0 1420500  73408  24328 S   5.4   0.3   5:38.48 /usr/local/bin/vo+
+1289854 mini      20   0  825544 102080  34272 S   4.4   0.4   0:03.07 /home/mini/bench/+
+   1884 root      20   0 2063424 657120 174620 S   3.4   2.3     35,37 /usr/local/bin/k3+
+3919948 root      20   0 1284652  34004  21008 S   3.0   0.1   2:44.74 /usr/local/bin/vo+
+ 952022 alloy     20   0 9409892 348800 244824 S   2.2   1.2  37:59.52 /usr/bin/alloy ru+
+1290341 vora      20   0 1271048  16504  10672 S   1.4   0.1   0:00.07 /vora/vora-init -+
+3973102 postgres  20   0  230480  45448  41744 S   0.8   0.2   0:05.83 postgres: 18/main+
+   1909 vora      20   0   26024  16468  11192 S   0.6   0.1   4:06.42 /usr/lib/systemd/+
+== bwrap c=4 rc=0
+- Measured 1000 of 1000 planned: 1000 with a verdict, 0 infrastructure failures
+%Cpu(s): 20.1 us,  7.3 sy,  0.0 ni, 71.6 id,  0.7 wa,  0.0 hi,  0.2 si,  0.0 st 
+3959138 vora      20   0 1420500  63800  24328 S  24.1   0.2   5:41.87 /usr/local/bin/vo+
+1290597 mini      20   0  830832 107868  34416 S  19.9   0.4   0:04.84 /home/mini/bench/+
+3919948 root      20   0 1284652  34572  21008 S  13.1   0.1   2:46.44 /usr/local/bin/vo+
+1292489 vora      20   0   17968  11560   3768 R   9.4   0.0   0:00.47 python3 /opt/vora+
+1291495 vora      20   0 1271624  17620  10672 S   4.8   0.1   0:00.32 /vora/vora-init -+
+   1884 root      20   0 2063424 657120 174620 S   4.6   2.3     35,37 /usr/local/bin/k3+
+   1909 vora      20   0   26024  16468  11192 S   2.0   0.1   4:06.71 /usr/lib/systemd/+
+1290702 postgres  20   0  230480  23600  19912 S   1.8   0.1   0:00.20 postgres: 18/main+
+== bwrap c=8 rc=0
+- Measured 1000 of 1000 planned: 1000 with a verdict, 0 infrastructure failures
+%Cpu(s): 23.5 us,  7.4 sy,  0.0 ni, 68.4 id,  0.5 wa,  0.0 hi,  0.2 si,  0.0 st 
+3959138 vora      20   0 1420500  62068  24328 S  24.1   0.2   5:47.90 /usr/local/bin/vo+
+3919948 root      20   0 1284652  34588  21008 S  11.6   0.1   2:49.19 /usr/local/bin/vo+
+   1884 root      20   0 2063424 657120 174620 S   5.6   2.3     35,37 /usr/local/bin/k3+
+   1909 vora      20   0   26024  16468  11192 S   4.6   0.1   4:07.22 /usr/lib/systemd/+
+1293160 postgres  20   0  230480  23876  20180 S   1.4   0.1   0:00.27 postgres: 18/main+
+ 952022 alloy     20   0 9409892 348928 244952 S   1.0   1.2  37:59.94 /usr/bin/alloy ru+
+1290702 postgres  20   0  230480  25060  21372 S   1.0   0.1   0:00.31 postgres: 18/main+
+3975507 postgres  20   0  230748  29396  25396 S   1.0   0.1   0:05.90 postgres: 18/main+
+== bwrap c=16 rc=0
+- Measured 1000 of 1000 planned: 1000 with a verdict, 0 infrastructure failures
+%Cpu(s): 19.3 us,  5.3 sy,  0.0 ni, 75.1 id,  0.1 wa,  0.0 hi,  0.2 si,  0.0 st 
+3959138 vora      20   0 1487324  49080  24328 S  14.1   0.2   5:53.29 /usr/local/bin/vo+
+   1884 root      20   0 2063424 657120 174620 S  11.7   2.3     35,37 /usr/local/bin/k3+
+3919948 root      20   0 1284652  35180  21008 S   6.6   0.1   2:51.87 /usr/local/bin/vo+
+   1909 vora      20   0   29512  18008  11192 S   1.8   0.1   4:07.69 /usr/lib/systemd/+
+ 952022 alloy     20   0 9418084 349440 245464 S   1.0   1.2  38:00.05 /usr/bin/alloy ru+
+1290702 postgres  20   0  230480  26900  23212 S   1.0   0.1   0:00.58 postgres: 18/main+
+1290703 postgres  20   0  230480  27448  23752 S   1.0   0.1   0:00.51 postgres: 18/main+
+   2430 root      20   0 1509632 179524 127828 S   0.8   0.6 226:15.98 containerd
+== gvisor c=1 rc=0
+- Measured 300 of 300 planned: 300 with a verdict, 0 infrastructure failures
+%Cpu(s):  4.6 us,  6.1 sy,  0.0 ni, 89.1 id,  0.1 wa,  0.0 hi,  0.0 si,  0.0 st 
+1300210 root      20   0 2534500  72900  44032 S  31.1   0.3   0:01.56 runsc-sandbox --n+
+3959148 root      20   0 1486268  69984  24840 S   4.6   0.2   6:26.88 /usr/local/bin/vo+
+   1884 root      20   0 2063416 657112 174620 S   3.8   2.3     35,37 /usr/local/bin/k3+
+1298033 mini      20   0  824256 101100  34212 S   2.8   0.4   0:02.85 /home/mini/bench/+
+3919948 root      20   0 1284652  33948  21008 S   1.8   0.1   2:52.13 /usr/local/bin/vo+
+ 952022 alloy     20   0 9418084 349440 245464 S   0.6   1.2  38:00.48 /usr/bin/alloy ru+
+ 108644 postgres  20   0  230480  47552  43848 S   0.4   0.2   0:07.54 postgres: 18/main+
+      1 root      20   0   27520  18788  11584 S   0.2   0.1  10:30.78 /usr/lib/systemd/+
+== gvisor c=4 rc=0
+- Measured 1000 of 1000 planned: 1000 with a verdict, 0 infrastructure failures
+%Cpu(s): 17.5 us, 22.3 sy,  0.0 ni, 59.9 id,  0.2 wa,  0.0 hi,  0.1 si,  0.0 st 
+1304681 root      20   0 2487548  94816  65216 S  91.6   0.3   0:11.28 runsc-sandbox --r+
+1304702 root      20   0 2487284  89236  60104 S  91.0   0.3   0:11.20 runsc-sandbox --i+
+1304701 root      20   0 2552900  90984  61956 S  90.6   0.3   0:11.13 runsc-sandbox --n+
+1304711 root      20   0 2462724  74144  44644 S  89.0   0.3   0:11.08 runsc-sandbox --r+
+3959148 root      20   0 1486268  46364  24840 S  15.5   0.2   6:30.43 /usr/local/bin/vo+
+1304600 mini      20   0  826860 103572  34104 S  10.0   0.4   0:03.87 /home/mini/bench/+
+   1884 root      20   0 2063416 659460 174620 S   9.2   2.3     35,37 /usr/local/bin/k3+
+3919948 root      20   0 1284652  34648  21008 S   7.0   0.1   2:53.41 /usr/local/bin/vo+
+== gvisor c=8 rc=0
+- Measured 1000 of 1000 planned: 1000 with a verdict, 0 infrastructure failures
+%Cpu(s): 30.0 us, 39.7 sy,  0.0 ni, 29.9 id,  0.3 wa,  0.0 hi,  0.2 si,  0.0 st 
+1326261 root      20   0 2552940 134056 105028 S  90.1   0.5   0:10.83 runsc-sandbox --r+
+1326184 root      20   0 2462188  72204  43508 S  88.9   0.3   0:10.72 runsc-sandbox --n+
+1326299 root      20   0 2462428  71616  42192 S  88.3   0.3   0:10.78 runsc-sandbox --o+
+1326343 root      20   0 2462244  72356  43568 S  88.1   0.3   0:10.72 runsc-sandbox --r+
+1326260 root      20   0 2486308  85364  56464 S  87.5   0.3   0:10.72 runsc-sandbox --r+
+1326298 root      20   0 2461932  72280  42568 S  87.5   0.3   0:10.73 runsc-sandbox --p+
+1326318 root      20   0 2528300  71664  42532 S  87.5   0.3   0:10.73 runsc-sandbox --r+
+1326272 root      20   0 2474460  75356  46168 S  87.3   0.3   0:10.69 runsc-sandbox --r+
+== gvisor c=16 rc=0
+- Measured 1000 of 1000 planned: 1000 with a verdict, 0 infrastructure failures
+%Cpu(s): 41.5 us, 54.5 sy,  0.0 ni,  3.7 id,  0.1 wa,  0.0 hi,  0.1 si,  0.0 st 
+1348583 root      20   0 2552604 189432 161048 S  76.5   0.7   0:08.56 runsc-sandbox --i+
+1348555 root      20   0 2462500  70452  42272 S  73.4   0.3   0:08.53 runsc-sandbox --r+
+1348645 root      20   0 2527796  70640  42360 S  72.6   0.3   0:08.45 runsc-sandbox --r+
+1348429 root      20   0 2486756  85496  56684 S  71.6   0.3   0:08.29 runsc-sandbox --r+
+1348396 root      20   0 2552100  85572  57312 S  71.2   0.3   0:08.49 runsc-sandbox --r+
+1348403 root      20   0 2485476  83716  55948 S  70.4   0.3   0:08.36 runsc-sandbox --n+
+1348569 root      20   0 2479844  82892  53748 S  69.8   0.3   0:08.39 runsc-sandbox --r+
+1348430 root      20   0 2527780  71892  42556 S  69.6   0.3   0:08.39 runsc-sandbox --i+

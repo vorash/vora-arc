@@ -1,0 +1,114 @@
+vora commit: 4260c8c1086fe338e01eccc2c67fc6577cfd65c4
+=== RUN   TestLeakMatrixGvisor
+=== RUN   TestLeakMatrixGvisor/none
+=== RUN   TestLeakMatrixGvisor/none/L1_scratch_files/0
+=== RUN   TestLeakMatrixGvisor/none/L2_bind_mount_files/0
+=== RUN   TestLeakMatrixGvisor/none/L3_vora/0
+=== RUN   TestLeakMatrixGvisor/none/L4_env/0
+=== RUN   TestLeakMatrixGvisor/none/L5_background_processes/0
+=== RUN   TestLeakMatrixGvisor/none/L6_holder_of_stdout/0
+=== RUN   TestLeakMatrixGvisor/none/L6_holder_of_stdout_past_a_timeout/0
+=== RUN   TestLeakMatrixGvisor/none/L1_scratch_files/1
+=== RUN   TestLeakMatrixGvisor/none/L2_bind_mount_files/1
+=== RUN   TestLeakMatrixGvisor/none/L3_vora/1
+=== RUN   TestLeakMatrixGvisor/none/L4_env/1
+=== RUN   TestLeakMatrixGvisor/none/L5_background_processes/1
+=== RUN   TestLeakMatrixGvisor/none/L6_holder_of_stdout/1
+=== RUN   TestLeakMatrixGvisor/none/L6_holder_of_stdout_past_a_timeout/1
+=== RUN   TestLeakMatrixGvisor/restricted
+=== RUN   TestLeakMatrixGvisor/restricted/L1_scratch_files/0
+=== RUN   TestLeakMatrixGvisor/restricted/L2_bind_mount_files/0
+=== RUN   TestLeakMatrixGvisor/restricted/L3_vora/0
+=== RUN   TestLeakMatrixGvisor/restricted/L4_env/0
+=== RUN   TestLeakMatrixGvisor/restricted/L5_background_processes/0
+=== RUN   TestLeakMatrixGvisor/restricted/L6_holder_of_stdout/0
+=== RUN   TestLeakMatrixGvisor/restricted/L6_holder_of_stdout_past_a_timeout/0
+=== RUN   TestLeakMatrixGvisor/restricted/L1_scratch_files/1
+=== RUN   TestLeakMatrixGvisor/restricted/L2_bind_mount_files/1
+=== RUN   TestLeakMatrixGvisor/restricted/L3_vora/1
+=== RUN   TestLeakMatrixGvisor/restricted/L4_env/1
+=== RUN   TestLeakMatrixGvisor/restricted/L5_background_processes/1
+=== RUN   TestLeakMatrixGvisor/restricted/L6_holder_of_stdout/1
+=== RUN   TestLeakMatrixGvisor/restricted/L6_holder_of_stdout_past_a_timeout/1
+--- PASS: TestLeakMatrixGvisor (24.34s)
+    --- PASS: TestLeakMatrixGvisor/none (12.00s)
+        --- PASS: TestLeakMatrixGvisor/none/L1_scratch_files/0 (0.46s)
+        --- PASS: TestLeakMatrixGvisor/none/L2_bind_mount_files/0 (0.80s)
+        --- PASS: TestLeakMatrixGvisor/none/L3_vora/0 (0.36s)
+        --- PASS: TestLeakMatrixGvisor/none/L4_env/0 (0.18s)
+        --- PASS: TestLeakMatrixGvisor/none/L5_background_processes/0 (1.14s)
+        --- PASS: TestLeakMatrixGvisor/none/L6_holder_of_stdout/0 (0.47s)
+        --- PASS: TestLeakMatrixGvisor/none/L6_holder_of_stdout_past_a_timeout/0 (2.26s)
+        --- PASS: TestLeakMatrixGvisor/none/L1_scratch_files/1 (0.45s)
+        --- PASS: TestLeakMatrixGvisor/none/L2_bind_mount_files/1 (0.77s)
+        --- PASS: TestLeakMatrixGvisor/none/L3_vora/1 (0.36s)
+        --- PASS: TestLeakMatrixGvisor/none/L4_env/1 (0.17s)
+        --- PASS: TestLeakMatrixGvisor/none/L5_background_processes/1 (1.11s)
+        --- PASS: TestLeakMatrixGvisor/none/L6_holder_of_stdout/1 (0.47s)
+        --- PASS: TestLeakMatrixGvisor/none/L6_holder_of_stdout_past_a_timeout/1 (2.26s)
+    --- PASS: TestLeakMatrixGvisor/restricted (12.34s)
+        --- PASS: TestLeakMatrixGvisor/restricted/L1_scratch_files/0 (0.46s)
+        --- PASS: TestLeakMatrixGvisor/restricted/L2_bind_mount_files/0 (0.80s)
+        --- PASS: TestLeakMatrixGvisor/restricted/L3_vora/0 (0.37s)
+        --- PASS: TestLeakMatrixGvisor/restricted/L4_env/0 (0.18s)
+        --- PASS: TestLeakMatrixGvisor/restricted/L5_background_processes/0 (1.13s)
+        --- PASS: TestLeakMatrixGvisor/restricted/L6_holder_of_stdout/0 (0.47s)
+        --- PASS: TestLeakMatrixGvisor/restricted/L6_holder_of_stdout_past_a_timeout/0 (2.26s)
+        --- PASS: TestLeakMatrixGvisor/restricted/L1_scratch_files/1 (0.45s)
+        --- PASS: TestLeakMatrixGvisor/restricted/L2_bind_mount_files/1 (0.78s)
+        --- PASS: TestLeakMatrixGvisor/restricted/L3_vora/1 (0.36s)
+        --- PASS: TestLeakMatrixGvisor/restricted/L4_env/1 (0.17s)
+        --- PASS: TestLeakMatrixGvisor/restricted/L5_background_processes/1 (1.13s)
+        --- PASS: TestLeakMatrixGvisor/restricted/L6_holder_of_stdout/1 (0.47s)
+        --- PASS: TestLeakMatrixGvisor/restricted/L6_holder_of_stdout_past_a_timeout/1 (2.27s)
+=== RUN   TestPoolLeakMatrix
+=== RUN   TestPoolLeakMatrix/bwrap
+    pool_leak_test.go:245: systemd user manager unavailable: cgroup: systemd user manager unavailable: Failed to connect to user scope bus via local transport: No such file or directory
+=== RUN   TestPoolLeakMatrix/gvisor
+=== RUN   TestPoolLeakMatrix/gvisor/L1_scratch_files/0
+=== RUN   TestPoolLeakMatrix/gvisor/L2_bind_mount_files/0
+=== RUN   TestPoolLeakMatrix/gvisor/L3_vora/0
+=== RUN   TestPoolLeakMatrix/gvisor/L4_env/0
+=== RUN   TestPoolLeakMatrix/gvisor/L5_background_processes/0
+=== RUN   TestPoolLeakMatrix/gvisor/L6_holder_of_stdout/0
+    pool_leak_test.go:453: a holder of stdout ended with reason:TIMEOUT_EXCEEDED  usage:{cpu_millis:8  memory_peak_bytes:52375552  memory_peak_scope:PEAK_SCOPE_WINDOW}  execution_id:"exe_01M6R78WRRB4NWRC4SRBHD1CTJ" after 2.013710362s
+=== RUN   TestPoolLeakMatrix/gvisor/L6_holder_of_stdout_past_a_timeout/0
+    pool_leak_test.go:453: a holder of stdout ended with reason:TIMEOUT_EXCEEDED  usage:{cpu_millis:9  memory_peak_bytes:47222784  memory_peak_scope:PEAK_SCOPE_WINDOW}  execution_id:"exe_01M6R78YXHS2BHCJ9ZX58T2W4H" after 2.013218337s
+=== RUN   TestPoolLeakMatrix/gvisor/L1_scratch_files/1
+=== RUN   TestPoolLeakMatrix/gvisor/L2_bind_mount_files/1
+=== RUN   TestPoolLeakMatrix/gvisor/L3_vora/1
+=== RUN   TestPoolLeakMatrix/gvisor/L4_env/1
+=== RUN   TestPoolLeakMatrix/gvisor/L5_background_processes/1
+=== RUN   TestPoolLeakMatrix/gvisor/L6_holder_of_stdout/1
+    pool_leak_test.go:453: a holder of stdout ended with reason:TIMEOUT_EXCEEDED  usage:{cpu_millis:7  memory_peak_bytes:50384896  memory_peak_scope:PEAK_SCOPE_WINDOW}  execution_id:"exe_01M6R793SHNYGXQHFD44DF91XT" after 2.012260033s
+=== RUN   TestPoolLeakMatrix/gvisor/L6_holder_of_stdout_past_a_timeout/1
+    pool_leak_test.go:453: a holder of stdout ended with reason:TIMEOUT_EXCEEDED  usage:{cpu_millis:15  memory_peak_bytes:49799168  memory_peak_scope:PEAK_SCOPE_WINDOW}  execution_id:"exe_01M6R795Y984XCD3BCYQSK231J" after 2.01291863s
+--- PASS: TestPoolLeakMatrix (15.14s)
+    --- SKIP: TestPoolLeakMatrix/bwrap (0.01s)
+    --- PASS: TestPoolLeakMatrix/gvisor (15.12s)
+        --- PASS: TestPoolLeakMatrix/gvisor/L1_scratch_files/0 (0.43s)
+        --- PASS: TestPoolLeakMatrix/gvisor/L2_bind_mount_files/0 (0.76s)
+        --- PASS: TestPoolLeakMatrix/gvisor/L3_vora/0 (0.36s)
+        --- PASS: TestPoolLeakMatrix/gvisor/L4_env/0 (0.23s)
+        --- PASS: TestPoolLeakMatrix/gvisor/L5_background_processes/0 (1.03s)
+        --- PASS: TestPoolLeakMatrix/gvisor/L6_holder_of_stdout/0 (2.20s)
+        --- PASS: TestPoolLeakMatrix/gvisor/L6_holder_of_stdout_past_a_timeout/0 (2.20s)
+        --- PASS: TestPoolLeakMatrix/gvisor/L1_scratch_files/1 (0.42s)
+        --- PASS: TestPoolLeakMatrix/gvisor/L2_bind_mount_files/1 (0.73s)
+        --- PASS: TestPoolLeakMatrix/gvisor/L3_vora/1 (0.35s)
+        --- PASS: TestPoolLeakMatrix/gvisor/L4_env/1 (0.23s)
+        --- PASS: TestPoolLeakMatrix/gvisor/L5_background_processes/1 (1.06s)
+        --- PASS: TestPoolLeakMatrix/gvisor/L6_holder_of_stdout/1 (2.20s)
+        --- PASS: TestPoolLeakMatrix/gvisor/L6_holder_of_stdout_past_a_timeout/1 (2.20s)
+=== RUN   TestPoolDisconnectMidRun
+=== RUN   TestPoolDisconnectMidRun/bwrap
+    pool_leak_test.go:245: systemd user manager unavailable: cgroup: systemd user manager unavailable: Failed to connect to user scope bus via local transport: No such file or directory
+=== RUN   TestPoolDisconnectMidRun/gvisor
+    pool_leak_test.go:761: 300 disconnects in 4m39.668882989s: 100 saw output, 0 replaced the member, 0 members died under the probe, 200 reused after a run known to have started, stats idle:1  runs_total:591  warm_runs_total:591  resets_total:591
+--- PASS: TestPoolDisconnectMidRun (280.36s)
+    --- SKIP: TestPoolDisconnectMidRun/bwrap (0.01s)
+    --- PASS: TestPoolDisconnectMidRun/gvisor (280.35s)
+=== RUN   TestBwrapReusableLeakMatrix
+    reuse_bwrap_test.go:139: systemd user manager unavailable: cgroup: systemd user manager unavailable: Failed to connect to user scope bus via local transport: No such file or directory
+--- SKIP: TestBwrapReusableLeakMatrix (0.01s)
+PASS
