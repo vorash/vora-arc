@@ -300,7 +300,7 @@ async def test_one_programs_vora_failure_is_reported_and_the_others_still_run(fa
 @pytest.mark.parametrize(
     ("mode", "expected"),
     [
-        (PoolMode.COLD, {"size": 0, "maxSize": 4}),
+        (PoolMode.COLD, {"size": 0, "maxSize": 8}),
         (PoolMode.WARM, {"size": 4, "maxSize": 4, "maxRuns": 100}),
         (PoolMode.WARM_NO_RESET, {"size": 4, "maxSize": 4, "maxRuns": 100, "reuse": "POOL_REUSE_UNSAFE_NO_RESET"}),
     ],

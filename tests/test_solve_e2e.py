@@ -165,7 +165,7 @@ def test_solve_runs_every_kind_of_program_in_real_sandboxes(
         measured = query(
             database_url,
             "SELECT bool_and(startup_ms > 0), bool_and(exec_ms > 0), bool_and(warm_start = false), "
-            "bool_and(reset_ms IS NULL), bool_and(audit_log_id IS NULL) FROM runs",
+            "bool_and(reset_ms IS NULL), bool_and(audit_log_id IS NOT NULL OR run_status = 'KILLED_OOM') FROM runs",
         )
         assert measured == [(True, True, True, True, True)]
 

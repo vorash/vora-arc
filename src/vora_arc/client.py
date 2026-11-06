@@ -99,13 +99,17 @@ async def run_batch(
         exec_ms=run.exec_ms,
         peak_mem_bytes=run.stats.memory_peak_bytes,
         cpu_ms=run.stats.cpu_millis,
+        audit_log_id=run.exec.execution_id,
     )
 
 
 def pool_shape(mode: PoolMode, concurrency: int) -> dict[str, Any]:
     """The spec fields that make a pool one of the experiment's arms. Nothing else differs."""
     if mode is PoolMode.COLD:
-        return {"size": 0, "max_size": concurrency}
+        # A retired member keeps its slot until its destroy returns. Twice the slots let the
+        # next start overlap that destroy, so a cold run doesn't wait for the previous one's.
+        # The client still runs only `concurrency` programs at a time.
+        return {"size": 0, "max_size": 2 * concurrency}
     shape: dict[str, Any] = {"size": concurrency, "max_size": concurrency, "max_runs": 100}
     return shape | {"reuse": "unsafe_no_reset"} if mode is PoolMode.WARM_NO_RESET else shape
 
@@ -399,6 +403,7 @@ class _Exec:
     exited: bool
     exit_reason: str | None
     stderr: bytes
+    execution_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -471,14 +476,15 @@ class _Collector:
         self._stderr += data
         del self._stderr[: -self._tail_bytes]
 
-    def finish(self, exited: bool, exit_reason: str | None) -> _Exec:
-        return _Exec(self._results, self._done, exited, exit_reason, bytes(self._stderr))
+    def finish(self, exited: bool, exit_reason: str | None, execution_id: str | None = None) -> _Exec:
+        return _Exec(self._results, self._done, exited, exit_reason, bytes(self._stderr), execution_id)
 
 
 async def _exec(sandbox: Sandbox, profile: Profile, stdin: str, is_test: tuple[bool, ...]) -> _Exec:
     collected = _Collector(profile, is_test)
     exited = False
     exit_reason: str | None = None
+    execution_id: str | None = None
     started_streaming = False
     command, *args = profile.runner_command
     try:
@@ -491,13 +497,13 @@ async def _exec(sandbox: Sandbox, profile: Profile, stdin: str, is_test: tuple[b
             elif chunk.kind == "stderr":
                 collected.stderr(chunk.data)
             else:
-                exited, exit_reason = True, chunk.reason
+                exited, exit_reason, execution_id = True, chunk.reason, chunk.execution_id
     except (VoraError, httpx.TransportError) as error:
         # Once output arrived the program has run; running it again would retry a program.
         if started_streaming and _is_transport_error(error):
             raise SandboxInfrastructureError(f"{sandbox.id}: exec stream broke: {error}") from error
         raise
-    return collected.finish(exited, exit_reason)
+    return collected.finish(exited, exit_reason, execution_id)
 
 
 def _run_status(output: _Exec, oom_kills: int | None, pids_limit_hits: int | None) -> RunStatus:

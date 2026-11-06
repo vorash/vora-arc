@@ -449,4 +449,10 @@ async def test_a_fresh_sandbox_is_never_warm_and_has_no_reset() -> None:
     assert result.warm_start is False
     assert result.reset_ms is None
     assert result.prepared_reset_ms is None
-    assert result.audit_log_id is None
+    assert result.audit_log_id is None, "this fake's exit names no execution"
+
+
+async def test_a_fresh_sandbox_run_keeps_the_audit_id_of_its_exit() -> None:
+    result = await run(FakeVora(exec_chunks=[*ALL_OK[:-1], {"exit": {"reason": "EXITED", "executionId": "exe_1"}}]))
+
+    assert result.audit_log_id == "exe_1"
