@@ -1,6 +1,5 @@
-# python-arc on hosts without gVisor, such as vora-mini (its runner is
-# non-root, and runsc needs uid 0). Identical to python-arc.toml except for
-# the backend: bwrap isolates with namespaces, cgroup v2 and seccomp.
+# python-arc on hosts without gVisor, or to compare the two backends.
+# Identical to python-arc.toml except for the backend: bwrap isolates with namespaces, cgroup v2 and seccomp.
 #
 # Runtime profile python-arc (spec section 3, V2).
 #
