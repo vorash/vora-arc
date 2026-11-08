@@ -158,7 +158,7 @@ corpus line says what it holds.
 ## What a run's result means
 
 A junk or mutated candidate failing verification is the expected result, not a failed run. `bench`
-keeps three things apart:
+keeps four things apart:
 
 | Count | Meaning | Effect |
 |---|---|---|
@@ -232,8 +232,10 @@ of the spec's full size, omit `--candidates`: it defaults to 10,000. `--warmup` 
 `--concurrency`. Warmup runs only hand-written solutions, stays out of every measured number and takes
 no candidate index.
 
-**How long it takes.** This is an estimate, and this page has no figure because nothing has been
-measured. Read the `cold` arm's programs per second from the smoke run above, and call it `R`. Then:
+**How long it takes.** On vora-mini at concurrency 8, the `cold` arm ran 33.4 programs per second on
+bwrap and 24.3 on gVisor ([Experiment 1 results](experiment-1-results.md)). At those rates, 10,000
+candidates take about 5 minutes on bwrap and 7 on gVisor. For another host, read the `cold` arm's
+programs per second from the smoke run above, and call it `R`. Then:
 
 ```text
 10,000 candidates on the cold arm = 10,000 / R seconds

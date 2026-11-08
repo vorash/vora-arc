@@ -34,10 +34,10 @@ peak memory (vorash/vora#108, since v0.10.3), and the environment probe
 
 **Skip v0.10.3 on bwrap.** Its OOM shim needs OS threads that count against `pids`,
 so at this profile's `pids = 16`, 8 of 40 runs of the solution suite failed. On v0.10.4,
-40 of 40 passed, and on v0.10.5, 25 of 25 passed. A long-lived sandbox is still at risk at this limit: after about 50
-execs in one sandbox on a 16-core host, `vora-init`'s threads use up the limit
-(vorash/vora#125). This harness runs one exec per sandbox, so it isn't affected yet,
-but warm pools would be.
+40 of 40 passed, and on v0.10.5, 25 of 25 passed. Before v0.10.6, a long-lived sandbox was also at risk at
+this limit: after about 50 execs in one sandbox on a 16-core host, `vora-init`'s threads used up the
+limit (vorash/vora#125). Warm pools run many execs per sandbox, and
+[experiment 1](experiment-1-results.md) ran them on v0.10.8 with no infrastructure failures.
 
 Neither bwrap nor systemd caused the 10x create gap above. gRPC's reconnect backoff made the
 runner wait about 1 s before retrying the agent's socket (vorash/vora#114, fixed in
