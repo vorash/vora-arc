@@ -85,8 +85,8 @@ To run the control, copy the 12 tasks that [the results document](docs/experimen
 `<dir>/arc1/training/`, and add `--dataset arc1 --split training --data-dir <dir>`.
 
 `VORA_MAX_CONCURRENCY` caps the sandboxes running at once (default 8). A report goes to `results/<run id>/`
-unless `--out` names another parent directory. The server here was a Scaleway L4-1-24G, set up with a separate
-Terraform and Ansible repository that isn't published.
+unless `--out` names another parent directory. The server here was a Scaleway L4-1-24G, set up with
+[inference-lab](https://github.com/iuliansafta/inference-lab), a separate Terraform and Ansible repository.
 
 ## Test it
 
