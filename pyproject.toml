@@ -27,7 +27,7 @@ dev = [
 ]
 
 [tool.uv.sources]
-vorash = { git = "ssh://git@github-vorash/vorash/vora.git", subdirectory = "sdk/python", rev = "0cca62dc17515caf60fdfee010298f90dc078801" }
+vorash = { git = "https://github.com/vorash/vora.git", subdirectory = "sdk/python", rev = "0cca62dc17515caf60fdfee010298f90dc078801" }
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
