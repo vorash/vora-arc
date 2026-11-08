@@ -138,8 +138,9 @@ What bounds `/tmp` is the sandbox's memory limit. The kernel charges tmpfs pages
 memory cgroup of the process that writes them, so under bwrap they count against
 `memory.max` with the program's own memory. Under gVisor the Sentry holds them, and the Sentry
 runs in the sandbox's cgroup. `test_filling_tmp_runs_into_the_memory_limit` expects `KILLED_OOM`
-from a program that writes 2 GB. It hasn't run yet, so treat this paragraph as read from the
-code and not as measured. Two other limits matter here:
+from a program that writes 2 GB. It passed on vora-mini on both backends, with Vora v0.10.8, on
+2026-11-08. The test shows that the limit holds. The explanation of why is read from the code.
+Two other limits matter here:
 
 - Vora sets a swap limit of 0 (`memory.swap.max` in `internal/cgroup/subtree.go`, `MemorySwapMax` in
   `internal/cgroup/systemd.go`), so pages charged to the sandbox can't move to swap, tmpfs pages included.
